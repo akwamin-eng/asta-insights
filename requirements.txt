@@ -1,0 +1,14 @@
+functions-framework==3.*
+supabase==2.*
+pandas==2.*
+numpy==1.*
+requests==2.*
+beautifulsoup4==4.*
+xgboost==2.*
+scikit-learn==1.*
+python-dotenv==1.*
+google-cloud-secret-manager==2.*
+vertexai>=1.0.0
+google-cloud-aiplatform>=1.38.1
+google-api-python-client>=2.0.0
+youtube-transcript-api>=1.2.2
