@@ -69,26 +69,43 @@ def generate_realistic_prices(df):
 
 def save_insights_to_history(supabase_df):
     """Save predictions to asta_property_insight_history."""
+    print(f"[DEBUG] save_insights_to_history: Starting with {len(supabase_df)} records from supabase_df.") # NEW: Log entry
     url = os.getenv("SUPABASE_URL")
     key = os.getenv("SUPABASE_KEY")
     if not url or not key:
         raise ValueError("Missing SUPABASE_URL or SUPABASE_KEY in .env")
-    
+
     supabase = create_client(url, key)
-    
+
     history_records = []
     for _, row in supabase_df.iterrows():
-        history_records.append({
-            "property_id": str(row["id"]),
-            "predicted_price": float(row["predicted_price"]),
-            "price_diff_pct": float(row["price_diff_pct"]),
-            "neighborhood_score": float(row["neighborhood_score"]),
-            "insight_generated_at": "now()"
-        })
-    
+        try:
+            record = {
+                "property_id": str(row["id"]),
+                "predicted_price": float(row["predicted_price"]),
+                "price_diff_pct": float(row["price_diff_pct"]),
+                "neighborhood_score": float(row["neighborhood_score"]),
+                # "insight_generated_at": "now()" # This is handled by the DB default
+            }
+            history_records.append(record)
+        except KeyError as e:
+            print(f"[ERROR] save_insights_to_history: Missing key {e} in row {row['id']}. Skipping record.")
+            continue # Skip this record if a key is missing
+        except ValueError as e:
+            print(f"[ERROR] save_insights_to_history: Value error for row {row['id']}: {e}. Skipping record.")
+            continue # Skip this record if a value can't be converted
+
+    print(f"[DEBUG] save_insights_to_history: Prepared {len(history_records)} records for upsert.") # NEW: Log preparation
     if history_records:
-        supabase.table("asta_property_insight_history").upsert(history_records).execute()
-        print(f"✅ Saved {len(history_records)} records to insight history")
+        try:
+            result = supabase.table("asta_property_insight_history").upsert(history_records).execute()
+            print(f"[DEBUG] save_insights_to_history: Successfully upserted {len(result.data)} records.") # NEW: Log success
+        except Exception as e:
+            print(f"[ERROR] save_insights_to_history: Failed to upsert records: {e}") # NEW: Log error
+            # Consider re-raising the exception if you want the main pipeline to fail if history fails
+            # raise e
+    else:
+        print(f"[WARN] save_insights_to_history: No valid records prepared for upsert.") # NEW: Log if empty
 
 def run_full_pipeline(scraped_df=None):
     """
@@ -169,3 +186,4 @@ def run_full_pipeline(scraped_df=None):
 
     # 11. Return for GCS archival
     return supabase_df
+

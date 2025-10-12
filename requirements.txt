@@ -12,3 +12,4 @@ vertexai>=1.0.0
 google-cloud-aiplatform>=1.38.1
 google-api-python-client>=2.0.0
 youtube-transcript-api>=1.2.2
+playwright>=1.40.0  # Add this line
