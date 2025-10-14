@@ -1,0 +1,103 @@
+# config/sites.yaml
+# Central configuration for ASTA data sources.
+# This file defines the target URLs for scraping property listings and general knowledge.
+# It allows easy expansion without modifying core scraping code.
+
+# --- Property Listings for Sale ---
+property_sale_sites:
+  - name: "Realtor.com Ghana"
+    base_url: "https://www.realtor.com/international/gh//"
+    # Add site-specific configurations like selectors, pagination strategy if needed later
+    # selectors:
+    #   property_item: ".property-item"
+    # pagination:
+    #   type: "click_next"
+    #   selector: "a.next-page"
+
+  - name: "Ghana Property Centre - For Sale"
+    base_url: "https://ghanapropertycentre.com/for-sale"
+    # selectors:
+    #   property_item: ".property-item"
+    # pagination:
+    #   type: "click_next"
+    #   selector: "a[rel='next']"
+
+  - name: "Meqasa - Houses for Sale"
+    base_url: "https://meqasa.com/houses-for-sale-in-ghana"
+    # selectors:
+    #   property_item: ".mqs-featured-property-cols-wrap"
+    # pagination:
+    #   type: "click_next"
+    #   selector: ".pagination li:last-child a" # Hypothetical selector
+
+  - name: "Jiji - Houses/Apartments for Sale"
+    base_url: "https://jiji.com.gh/houses-apartments-for-sale"
+    # selectors:
+    #   property_item: ".b-list-advert-item"
+    # pagination:
+    #   type: "click_next"
+    #   selector: ".b-pagination__next" # Hypothetical selector
+
+# --- Property Listings for Rent ---
+property_rent_sites:
+  - name: "Ghana Property Centre - For Rent"
+    base_url: "https://ghanapropertycentre.com/for-rent"
+    # selectors:
+    #   property_item: ".property-item"
+    # pagination:
+    #   type: "click_next"
+    #   selector: "a[rel='next']"
+
+  - name: "Meqasa - Properties for Rent"
+    base_url: "https://meqasa.com/properties-for-rent-in-ghana"
+    # selectors:
+    #   property_item: ".mqs-featured-property-cols-wrap"
+    # pagination:
+    #   type: "click_next"
+    #   selector: ".pagination li:last-child a" # Hypothetical selector
+
+  - name: "Jiji - Houses/Apartments for Rent"
+    base_url: "https://jiji.com.gh/houses-apartments-for-rent"
+    # selectors:
+    #   property_item: ".b-list-advert-item"
+    # pagination:
+    #   type: "click_next"
+    #   selector: ".b-pagination__next" # Hypothetical selector
+
+# --- General Knowledge Sources ---
+general_knowledge_sites:
+  - name: "Anaarkutu"
+    base_url: "https://anaarkutu.com"
+    # selectors:
+    #   article_item: "article.post" # Hypothetical selector
+    # pagination:
+    #   type: "click_next"
+    #   selector: ".next-posts-link" # Hypothetical selector
+
+  - name: "REPA Ghana"
+    base_url: "https://www.repagh.org"
+    # selectors:
+    #   article_item: ".post" # Hypothetical selector
+    # pagination:
+    #   type: "click_next"
+    #   selector: ".next.page-numbers" # Hypothetical selector
+
+# --- Dynamic Search Keywords ---
+# These keywords will be used for dynamic searches (e.g., Google News, site-specific searches)
+# This allows discovering new information beyond the fixed URLs above.
+dynamic_search_keywords:
+  - "Ghana real estate market"
+  - "Accra property prices"
+  - "Ghana mortgage rates"
+  - "Kumasi housing development"
+  - "Ghana land ownership regulations"
+  - "Ghana inflation impact real estate"
+  - "Ghana interest rates construction"
+  - "investing in Ghana"
+  - "building in Ghana"
+  - "cement price"
+  - "cement prices" # Plural form
+  - "rod iron"      # Common term
+  - "steel rod"     # Common alternative
+  - "iron rod"
+
