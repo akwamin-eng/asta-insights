@@ -3,12 +3,18 @@ import requests
 from dotenv import load_dotenv
 from supabase import create_client
 
-load_dotenv()
+# Only load .env if it exists (local dev)
+if os.path.exists(".env"):
+    load_dotenv()
+
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# Free Exchange Rate API (No key needed for basic usage)
+if not SUPABASE_URL or not SUPABASE_KEY:
+    print("❌ Error: Missing Supabase credentials in environment.")
+    exit(1)
+
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 API_URL = "https://open.er-api.com/v6/latest/USD"
 
 def run():
@@ -16,18 +22,14 @@ def run():
     try:
         response = requests.get(API_URL)
         data = response.json()
-        
         ghs_rate = data['rates']['GHS']
         print(f"   Current Rate: 1 USD = {ghs_rate} GHS")
 
-        # Insert into Database
-        payload = {
+        supabase.table("economic_indicators").insert({
             "indicator_type": "USD_GHS",
             "value": ghs_rate
-        }
-        supabase.table("economic_indicators").insert(payload).execute()
+        }).execute()
         print("✅ Currency data saved.")
-
     except Exception as e:
         print(f"❌ Error: {e}")
 

@@ -1,64 +1,46 @@
 import os
 import json
 from dotenv import load_dotenv
-from supabase import create_client, Client
+from supabase import create_client
 from google import genai
 
-load_dotenv()
+if os.path.exists(".env"):
+    load_dotenv()
+
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 client = genai.Client(api_key=GEMINI_API_KEY)
 
 def get_market_context(location):
-    """Fetches global context to feed into the LLM"""
-    # Get latest USD rate
-    currency = supabase.table("economic_indicators").select("value").order("recorded_at", desc=True).limit(1).execute()
-    rate = currency.data[0]['value'] if currency.data else 15.0
+    rate = 15.0
+    try:
+        currency = supabase.table("economic_indicators").select("value").order("recorded_at", desc=True).limit(1).execute()
+        if currency.data: rate = currency.data[0]['value']
+    except: pass
     
-    # Get neighborhood stats
-    stats = supabase.table("market_insights").select("*").eq("location", location).execute()
+    stats = None
+    try:
+        res = supabase.table("market_insights").select("*").eq("location", location).execute()
+        if res.data: stats = res.data[0]
+    except: pass
     
-    # Get latest relevant news
-    news = supabase.table("news_articles").select("title").order("published_at", desc=True).limit(3).execute()
-    
-    return rate, stats.data[0] if stats.data else None, news.data
+    return rate, stats
 
 def process_batch(limit=5):
-    # Find listings that haven't been analyzed yet
-    targets = supabase.table("market_listings") \
-        .select("*") \
-        .is_("insight_cache", "null") \
-        .limit(limit).execute()
-
+    targets = supabase.table("market_listings").select("*").is_("insight_cache", "null").limit(limit).execute()
     if not targets.data:
-        print("✅ All listings have up-to-date insights.")
+        print("✅ No listings need processing.")
         return
 
     for item in targets.data:
         loc = item.get('location', 'Accra')
-        rate, stats, news = get_market_context(loc)
-        
-        print(f"🧠 Processing: {item['title']}...")
+        rate, stats = get_market_context(loc)
+        print(f"🧠 Analyzing: {item['title']}...")
 
-        prompt = f"""
-        Analyze this Ghana property and return ONLY a JSON object.
-        PROPERTY: {item['title']} in {loc}
-        PRICE: {item['currency']} {item['price']}
-        MARKET DATA: USD/GHS {rate}, Stats: {stats}, News: {news}
-
-        Return exactly this structure:
-        {{
-          "verdict": "BUY" | "WATCH" | "AVOID",
-          "investment_score": 0-10,
-          "deal_highlights": ["3 bullet points"],
-          "market_position": "Underpriced" | "Fair Value" | "Premium",
-          "currency_risk": "Low" | "Medium" | "High",
-          "short_summary": "One sentence summary."
-        }}
-        """
+        prompt = f"Analyze property and return JSON: {item['title']} in {loc} at {item['price']}. USD Rate: {rate}. Market Stats: {stats}"
 
         try:
             response = client.models.generate_content(
@@ -66,17 +48,13 @@ def process_batch(limit=5):
                 contents=prompt,
                 config={'response_mime_type': 'application/json'}
             )
-            insight_data = json.loads(response.text)
-
-            # Update Supabase
             supabase.table("market_listings").update({
-                "insight_cache": insight_data,
+                "insight_cache": json.loads(response.text),
                 "insight_last_updated": "now()"
             }).eq("id", item['id']).execute()
-            
-            print(f"   ✅ Insight cached for {item['id']}")
+            print(f"   ✅ Saved.")
         except Exception as e:
-            print(f"   ❌ Error processing {item['id']}: {e}")
+            print(f"   ❌ Error: {e}")
 
 if __name__ == "__main__":
     process_batch()
