@@ -97,7 +97,19 @@ dynamic_search_keywords:
   - "building in Ghana"
   - "cement price"
   - "cement prices" # Plural form
-  - "rod iron"      # Common term
-  - "steel rod"     # Common alternative
+  - "rod iron" # Common term
+  - "steel rod" # Common alternative
   - "iron rod"
 
+bank_of_ghana:
+  url: "https://www.bog.gov.gh/"
+  selectors:
+    # Target the container for market data
+    market_data_container: ".market-data"
+    # Logic: Find the row containing 'USD', then get the first numerical value in that row
+    usd_buy_rate: "table.table-market-data tr:has-text('USD') td:nth-child(2)"
+    usd_sell_rate: "table.table-market-data tr:has-text('USD') td:nth-child(3)"
+    # Target the inflation rate displayed on the dashboard
+    inflation_rate: ".inflation-rate span"
+  wait_condition: "networkidle"
+  timeout: 30000

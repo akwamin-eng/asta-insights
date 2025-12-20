@@ -1,0 +1,53 @@
+# .gcloudignore
+# Prevent local files from being uploaded during gcloud builds submit or when deploying
+
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+.coverage
+.pytest_cache/
+.pytest_cache/*
+.coverage
+.nox/
+.tox/
+.env # If you use .env files, list them explicitly if needed, otherwise ignore
+*.env
+
+# Logs
+*.log
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# OS generated files
+Thumbs.db
+
+# Project specific ignores
+# Add any other files/folders specific to your project that shouldn't be uploaded
+
+# Commonly ignored files
+README.md
+LICENSE
+AUTHORS
+CONTRIBUTORS
+CHANGELOG.md
+# Dockerfile  <-- This line was excluding the Dockerfile, causing the build to fail
+.dockerignore
+.gcloudignore # Ignore the ignore file itself when packaging sometimes
+
+# Add patterns for build artifacts or temporary files your specific build process might create
+# build/
+# dist/
+# *.tmp
