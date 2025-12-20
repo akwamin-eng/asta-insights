@@ -2,12 +2,16 @@ name: Asta Daily Intelligence Update
 
 on:
   schedule:
-    - cron: '0 0 * * *' # Runs every night at midnight
-  workflow_dispatch: # Allows you to run it manually from GitHub UI
+    - cron: '0 0 * * *'
+  workflow_dispatch:
 
 jobs:
   update-asta:
     runs-on: ubuntu-latest
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
     steps:
       - name: Checkout Code
         uses: actions/checkout@v3
@@ -21,13 +25,10 @@ jobs:
         run: |
           pip install requests feedparser python-dotenv supabase google-genai
 
-      - name: Run Harvesters and Batcher
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      - name: Run Full Intelligence Pipeline
         run: |
           python update_economics.py
           python update_news.py
           python update_market_stats.py
+          python update_sentiment.py      # <--- NEW
           python batch_generate_insights.py
