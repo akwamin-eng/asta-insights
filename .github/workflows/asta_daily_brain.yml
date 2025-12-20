@@ -32,3 +32,16 @@ jobs:
           python update_market_stats.py
           python update_sentiment.py      # <--- NEW
           python batch_generate_insights.py
+
+      - name: Install Dependencies
+        run: |
+          pip install requests feedparser python-dotenv supabase google-genai geopy
+
+      - name: Run Full Intelligence Pipeline
+        run: |
+          python update_economics.py
+          python update_news.py
+          python update_market_stats.py
+          python update_geocoords.py      # <--- NEW
+          python update_sentiment.py
+          python batch_generate_insights.py
