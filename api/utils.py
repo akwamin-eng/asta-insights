@@ -22,8 +22,14 @@ client = genai.Client(api_key=os.environ.get("GOOGLE_API_KEY"))
 supabase = create_client(os.environ.get("SUPABASE_URL"), os.environ.get("SUPABASE_SERVICE_ROLE_KEY"))
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
 
+# --- REGEX PATTERNS ---
+# 1. Ghana Post (e.g., GA-183-8192 or GA1838192)
 GHANA_POST_REGEX = r"([A-Z]{2}-?\d{3,4}-?\d{3,4})"
+# 2. Plus Code (e.g., 8FQM+57)
 PLUS_CODE_REGEX = r"([23456789CFGHJMPQRVWX]{4,8}\+[23456789CFGHJMPQRVWX]{2,3})"
+# 3. Raw Coordinates (e.g., 5.603, -0.187 or 5.603,-0.187)
+LAT_LON_REGEX = r"(-?\d{1,2}\.\d+)\s*,\s*(-?\d{1,3}\.\d+)"
+# 4. Google Maps Link
 GOOGLE_LINK_REGEX = r"maps\.app\.goo\.gl\/[a-zA-Z0-9]+"
 
 def _convert_to_degrees(value):
@@ -78,7 +84,6 @@ def recursive_find_coords(data: Any) -> Tuple[Optional[float], Optional[float]]:
     return None, None
 
 def cache_address(address: str, lat: float, lon: float, source: str):
-    """Saves valid address to Supabase."""
     try:
         supabase.table("location_cache").upsert({
             "address_id": address,
@@ -91,7 +96,6 @@ def cache_address(address: str, lat: float, lon: float, source: str):
         print(f"Cache Write Failed: {e}")
 
 def check_cache(address: str) -> Tuple[Optional[float], Optional[float]]:
-    """Checks Supabase before calling external APIs."""
     try:
         resp = supabase.table("location_cache").select("*").eq("address_id", address).execute()
         if resp.data and len(resp.data) > 0:
@@ -102,16 +106,12 @@ def check_cache(address: str) -> Tuple[Optional[float], Optional[float]]:
 
 def query_ghana_post_direct(address: str) -> Tuple[Optional[float], Optional[float], str]:
     formatted_address = normalize_ghana_post(address)
-    
-    # 1. CHECK CACHE
     c_lat, c_lon = check_cache(formatted_address)
     if c_lat and c_lon:
         return c_lat, c_lon, f"Verified via Asta Cache: {formatted_address}"
 
-    # 2. QUERY BRIDGE
     url = "https://ghanapostgps.sperixlabs.org/get-location"
     headers = {'User-Agent': 'Mozilla/5.0 (Compatible; AstaInsights/1.0)', 'Content-Type': 'application/x-www-form-urlencoded'}
-    
     try:
         resp = requests.post(url, data={'address': formatted_address}, headers=headers, timeout=5)
         if resp.status_code == 200:
@@ -137,13 +137,33 @@ def geocode_with_google(address_text: str) -> Tuple[Optional[float], Optional[fl
         data = resp.json()
         if data['status'] == 'OK' and len(data['results']) > 0:
             location = data['results'][0]['geometry']['location']
+            if data['results'][0].get('geometry', {}).get('location_type') == 'ROOFTOP':
+                 cache_address(normalize_ghana_post(address_text), location['lat'], location['lng'], 'google')
             return location['lat'], location['lng']
     except Exception:
         pass
     return None, None
 
 def resolve_text_location(text_input: str) -> Tuple[Optional[float], Optional[float], str]:
+    """
+    The Omni-Parser: Handles GhanaPost, Plus Codes, and Raw Lat/Lon.
+    """
     if not text_input: return None, None, ""
+
+    # 1. Check for Raw Lat, Lon (e.g. 5.603, -0.187)
+    coord_match = re.search(LAT_LON_REGEX, text_input)
+    if coord_match:
+        try:
+            lat = float(coord_match.group(1))
+            lon = float(coord_match.group(2))
+            # Basic validation for Ghana (approx limits)
+            if 4.0 <= lat <= 12.0 and -4.0 <= lon <= 2.0:
+                 return lat, lon, "Detected Raw Coordinates"
+            return lat, lon, "Detected Coordinates (Outside Ghana Warning)"
+        except ValueError:
+            pass
+
+    # 2. Check Ghana Post GPS
     gp_match = re.search(GHANA_POST_REGEX, text_input.upper())
     if gp_match:
         raw_address = gp_match.group(0)
@@ -152,6 +172,8 @@ def resolve_text_location(text_input: str) -> Tuple[Optional[float], Optional[fl
         lat, lon = geocode_with_google(raw_address)
         if lat and lon: return lat, lon, f"Resolved via Google Maps: {raw_address}"
         return None, None, f"Parsing Failed: {status_msg}"
+
+    # 3. Check Plus Codes
     pc_match = re.search(PLUS_CODE_REGEX, text_input.upper())
     if pc_match:
         code = pc_match.group(0)
@@ -161,21 +183,6 @@ def resolve_text_location(text_input: str) -> Tuple[Optional[float], Optional[fl
                 return decoded.latitudeCenter, decoded.longitudeCenter, f"Decoded Plus Code: {code}"
         except: pass
     return None, None, ""
-
-def get_ai_location_estimate(image_bytes: bytes) -> Tuple[Optional[float], Optional[float], str]:
-    prompt = "Analyze this image. Look for 'Ghana Post GPS' addresses painted on walls. Return JSON {found, latitude, longitude, reason}"
-    try:
-        response = client.models.generate_content(
-            model="gemini-2.0-flash",
-            contents=[types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"), prompt],
-            config=types.GenerateContentConfig(response_mime_type="application/json")
-        )
-        data = json.loads(re.sub(r"```json|```", "", response.text).strip())
-        if data.get("found"):
-            return data.get("latitude"), data.get("longitude"), data.get("reason")
-        return None, None, "No visual landmarks found."
-    except:
-        return None, None, "AI Vision Failed"
 
 async def extract_gps_from_file(file_obj, text_hint: str = None) -> Tuple[Optional[float], Optional[float], str]:
     file_bytes = await file_obj.read()
@@ -188,8 +195,16 @@ async def extract_gps_from_file(file_obj, text_hint: str = None) -> Tuple[Option
         err_msg = msg
     try:
         if len(file_bytes) > 0:
-            lat, lon, reason = get_ai_location_estimate(file_bytes)
-            if lat and lon: return lat, lon, f"AI Vision: {reason}"
+            # Re-adding AI Logic
+            prompt = "Analyze this image. Look for 'Ghana Post GPS' addresses painted on walls. Return JSON {found, latitude, longitude, reason}"
+            response = client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=[types.Part.from_bytes(data=file_bytes, mime_type="image/jpeg"), prompt],
+                config=types.GenerateContentConfig(response_mime_type="application/json")
+            )
+            data = json.loads(re.sub(r"```json|```", "", response.text).strip())
+            if data.get("found"):
+                return data.get("latitude"), data.get("longitude"), f"AI Vision: {data.get('reason')}"
     except: pass
     final_msg = f"Location Failed. {err_msg}" if err_msg else "Location detection failed."
     return None, None, final_msg
