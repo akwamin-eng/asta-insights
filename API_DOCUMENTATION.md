@@ -165,3 +165,35 @@ Scenario C (Zero Results): "We couldn't find any listings in this area just yet.
 3. Rent vs. Buy Intelligence
 The API uses price thresholds (< 20k GHS) and title keywords ("Rent", "Lease") to automatically categorize listings. You do not need to manually filter these for the "Trust Bullets" to work; the backend handles the context switching.
 
+
+## 📍 Advanced Location Parsing (Ghana Context)
+
+The `/utils/extract-gps` endpoint is now context-aware for the Ghanaian market.
+It accepts an image `file` AND an optional `text_hint` string.
+
+**The "Waterfall" Logic:**
+1.  **EXIF:** Checks for embedded GPS (Highest Accuracy).
+2.  **Ghana Digital Address:** regex match for `GA-XXX-XXXX`.
+3.  **Plus Codes:** Decodes `8FQM+57`.
+4.  **AI Vision:** Scans the photo for painted addresses on walls or landmarks.
+
+**Agent Use Case:**
+> *"Agent snaps a photo of the gate (which has the Digital Address painted on it). Asta reads the text from the image and geolocates the property automatically."*
+
+
+---
+
+## 📍 Advanced Location Parsing (Ghana Context)
+
+The `/utils/extract-gps` endpoint is now context-aware for the Ghanaian market.
+It accepts an image `file` AND an optional `text_hint` string.
+
+**The "Waterfall" Logic:**
+1.  **EXIF:** Checks for embedded GPS (Highest Accuracy).
+2.  **Ghana Digital Address:** Regex match for `GA-XXX-XXXX`. Resolves to coordinates via Google Geocoding.
+3.  **Plus Codes:** Decodes `8FQM+57`.
+4.  **AI Vision:** Scans the photo for painted addresses on walls or landmarks.
+
+**Agent Use Case:**
+> *"Agent snaps a photo of the gate. Asta reads 'GA-183-8192' and instantly places the pin on the map."*
+

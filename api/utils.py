@@ -1,6 +1,7 @@
 import os
 import re
 import json
+import requests
 from typing import Tuple, Optional
 from io import BytesIO
 from PIL import Image
@@ -8,16 +9,15 @@ from PIL.ExifTags import TAGS, GPSTAGS
 from google import genai
 from google.genai import types
 from dotenv import load_dotenv
-import openlocationcode as olc # Google Plus Codes
+import openlocationcode as olc 
 
 # Load env
 load_dotenv()
 
 client = genai.Client(api_key=os.environ.get("GOOGLE_API_KEY"))
+GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
 
-# --- GHANA DIGITAL ADDRESS CONSTANTS (Simplified Mapping) ---
-# In a real prod app, you would query the GhanaPostGPS API. 
-# For MVP, we use Gemini to resolve the address to Lat/Lon if Regex matches.
+# --- REGEX PATTERNS ---
 GHANA_POST_REGEX = r"([A-Z]{2}-\d{3,4}-\d{3,4})"
 PLUS_CODE_REGEX = r"([23456789CFGHJMPQRVWX]{4,8}\+[23456789CFGHJMPQRVWX]{2,3})"
 GOOGLE_LINK_REGEX = r"maps\.app\.goo\.gl\/[a-zA-Z0-9]+"
@@ -54,6 +54,33 @@ def get_exif_gps(image_bytes: bytes) -> Tuple[Optional[float], Optional[float]]:
     except Exception:
         return None, None
 
+def geocode_with_google(address_text: str) -> Tuple[Optional[float], Optional[float]]:
+    """
+    Uses Google Maps Geocoding API to resolve Ghana Post Addresses.
+    """
+    if not GOOGLE_API_KEY:
+        print("⚠️ Missing GOOGLE_API_KEY")
+        return None, None
+
+    try:
+        # We append ", Ghana" to ensure context
+        url = "https://maps.googleapis.com/maps/api/geocode/json"
+        params = {
+            "address": f"{address_text}, Ghana",
+            "key": GOOGLE_API_KEY
+        }
+        resp = requests.get(url, params=params)
+        data = resp.json()
+
+        if data['status'] == 'OK' and len(data['results']) > 0:
+            location = data['results'][0]['geometry']['location']
+            return location['lat'], location['lng']
+            
+    except Exception as e:
+        print(f"Geocoding Error: {e}")
+    
+    return None, None
+
 def resolve_text_location(text_input: str) -> Tuple[Optional[float], Optional[float], str]:
     """
     TIER 2 & 3: Text Parser (Ghana Post, Plus Code, Google Links).
@@ -64,19 +91,20 @@ def resolve_text_location(text_input: str) -> Tuple[Optional[float], Optional[fl
     gp_match = re.search(GHANA_POST_REGEX, text_input.upper())
     if gp_match:
         address = gp_match.group(0)
-        # Ask Gemini to Geocode this specifically (since GhanaPost API is closed/paid)
-        # Gemini often knows the major digital addresses or can approximate.
-        return None, None, f"Detected Ghana Digital Address: {address}. (Requires Manual Verify or API)"
+        
+        # ⚡️ Resolve immediately using Google
+        lat, lon = geocode_with_google(address)
+        
+        if lat and lon:
+            return lat, lon, f"Resolved Ghana Post Address: {address}"
+        else:
+            return None, None, f"Detected Ghana Digital Address: {address} (Google could not resolve)"
 
     # B. Check Plus Code (e.g., 8FQM+57 Accra)
-    # We clean it to ensure it's a valid global code or local code
     pc_match = re.search(PLUS_CODE_REGEX, text_input.upper())
     if pc_match:
         code = pc_match.group(0)
         try:
-            # If short code (e.g. 8FQM+57), we need a reference location (Accra). 
-            # For MVP, assuming full code or handling via Gemini fallback.
-            # But let's try strict decoding:
             if olc.isValid(code):
                 decoded = olc.decode(code)
                 return decoded.latitudeCenter, decoded.longitudeCenter, f"Decoded Plus Code: {code}"
@@ -128,7 +156,7 @@ async def extract_gps_from_file(file_obj, text_hint: str = None) -> Tuple[Option
     if text_hint:
         lat, lon, msg = resolve_text_location(text_hint)
         if lat and lon: return lat, lon, msg
-        if "Detected" in msg: return None, None, msg # Return the detection for manual handling
+        # If text hint fails to resolve, fallback to AI Vision
 
     # 3. AI Vision
     lat, lon, reason = get_ai_location_estimate(file_bytes)
