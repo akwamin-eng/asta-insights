@@ -18,7 +18,8 @@ client = genai.Client(api_key=os.environ.get("GOOGLE_API_KEY"))
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
 
 # --- REGEX PATTERNS ---
-GHANA_POST_REGEX = r"([A-Z]{2}-\d{3,4}-\d{3,4})"
+# Relaxed regex to catch "GA1826363" and "GA-182-6363"
+GHANA_POST_REGEX = r"([A-Z]{2}-?\d{3,4}-?\d{3,4})"
 PLUS_CODE_REGEX = r"([23456789CFGHJMPQRVWX]{4,8}\+[23456789CFGHJMPQRVWX]{2,3})"
 GOOGLE_LINK_REGEX = r"maps\.app\.goo\.gl\/[a-zA-Z0-9]+"
 
@@ -54,31 +55,46 @@ def get_exif_gps(image_bytes: bytes) -> Tuple[Optional[float], Optional[float]]:
     except Exception:
         return None, None
 
-def geocode_with_google(address_text: str) -> Tuple[Optional[float], Optional[float]]:
+def query_ghana_post_direct(address: str) -> Tuple[Optional[float], Optional[float]]:
     """
-    Uses Google Maps Geocoding API to resolve Ghana Post Addresses.
+    Connects to the GhanaPostGPS Grid via Community Bridge (SperixLabs).
+    This solves the 'Google doesnt know' problem.
     """
-    if not GOOGLE_API_KEY:
-        print("⚠️ Missing GOOGLE_API_KEY")
-        return None, None
-
     try:
-        # We append ", Ghana" to ensure context
-        url = "https://maps.googleapis.com/maps/api/geocode/json"
-        params = {
-            "address": f"{address_text}, Ghana",
-            "key": GOOGLE_API_KEY
-        }
-        resp = requests.get(url, params=params)
-        data = resp.json()
+        # Standardize format (GA1826363 -> GA-182-6363) if needed by API
+        # But this specific API is robust.
+        
+        url = "https://ghanapostgps.sperixlabs.org/get-location"
+        # The API expects a POST with 'address'
+        payload = {'address': address}
+        
+        # 5 second timeout to prevent hanging
+        resp = requests.post(url, data=payload, timeout=5)
+        
+        if resp.status_code == 200:
+            data = resp.json()
+            # API returns: {"found": true, "data": {"Table": [{"NLat": ..., "WLong": ...}]}}
+            if data.get('found') and data.get('data'):
+                table = data['data']['Table'][0]
+                return float(table['NLat']), float(table['WLong'])
+    except Exception as e:
+        print(f"GhanaPost Bridge Error: {e}")
+    
+    return None, None
 
+def geocode_with_google(address_text: str) -> Tuple[Optional[float], Optional[float]]:
+    """Fallback: Ask Google Maps."""
+    if not GOOGLE_API_KEY: return None, None
+    try:
+        url = "https://maps.googleapis.com/maps/api/geocode/json"
+        params = {"address": f"{address_text}, Ghana", "key": GOOGLE_API_KEY}
+        resp = requests.get(url, params=params, timeout=5)
+        data = resp.json()
         if data['status'] == 'OK' and len(data['results']) > 0:
             location = data['results'][0]['geometry']['location']
             return location['lat'], location['lng']
-            
-    except Exception as e:
-        print(f"Geocoding Error: {e}")
-    
+    except Exception:
+        pass
     return None, None
 
 def resolve_text_location(text_input: str) -> Tuple[Optional[float], Optional[float], str]:
@@ -87,20 +103,24 @@ def resolve_text_location(text_input: str) -> Tuple[Optional[float], Optional[fl
     """
     if not text_input: return None, None, ""
 
-    # A. Check Ghana Post GPS (e.g., GA-183-8192)
+    # A. Check Ghana Post GPS (e.g., GA-183-8192 or GA1826363)
     gp_match = re.search(GHANA_POST_REGEX, text_input.upper())
     if gp_match:
         address = gp_match.group(0)
         
-        # ⚡️ Resolve immediately using Google
-        lat, lon = geocode_with_google(address)
-        
+        # STRATEGY 1: Try the Official Ghana Post Grid (Most Accurate)
+        lat, lon = query_ghana_post_direct(address)
         if lat and lon:
-            return lat, lon, f"Resolved Ghana Post Address: {address}"
-        else:
-            return None, None, f"Detected Ghana Digital Address: {address} (Google could not resolve)"
+            return lat, lon, f"Verified Ghana Post Address: {address}"
 
-    # B. Check Plus Code (e.g., 8FQM+57 Accra)
+        # STRATEGY 2: Fallback to Google Maps
+        lat, lon = geocode_with_google(address)
+        if lat and lon:
+            return lat, lon, f"Resolved via Google Maps: {address}"
+            
+        return None, None, f"Detected address {address} but could not resolve coordinates."
+
+    # B. Check Plus Code
     pc_match = re.search(PLUS_CODE_REGEX, text_input.upper())
     if pc_match:
         code = pc_match.group(0)
@@ -111,9 +131,9 @@ def resolve_text_location(text_input: str) -> Tuple[Optional[float], Optional[fl
         except:
             pass
             
-    # C. Google Maps Link (Hard fallback)
+    # C. Google Maps Link
     if re.search(GOOGLE_LINK_REGEX, text_input):
-        return None, None, "Detected Google Maps Link (Frontend should expand this URL)"
+        return None, None, "Detected Google Maps Link"
 
     return None, None, ""
 
@@ -121,9 +141,7 @@ def get_ai_location_estimate(image_bytes: bytes) -> Tuple[Optional[float], Optio
     """TIER 4: Gemini Vision deduction."""
     print("🤖 Gemini Vision: analyzing image for landmarks...")
     prompt = """
-    Analyze this real estate image for location clues.
-    1. Look for 'Ghana Post GPS' addresses painted on walls (e.g. GA-123-4567).
-    2. Look for landmarks.
+    Analyze this real estate image. Look for 'Ghana Post GPS' addresses painted on walls (e.g. GA-123-4567).
     Return JSON: { "found": bool, "latitude": float, "longitude": float, "reason": str }
     """
     try:
@@ -140,23 +158,16 @@ def get_ai_location_estimate(image_bytes: bytes) -> Tuple[Optional[float], Optio
         return None, None, f"AI Error: {str(e)}"
 
 async def extract_gps_from_file(file_obj, text_hint: str = None) -> Tuple[Optional[float], Optional[float], str]:
-    """
-    THE MASTER ORCHESTRATOR.
-    1. Try EXIF.
-    2. Try Text Hint (Ghana Post / Plus Code).
-    3. Try AI Vision.
-    """
     file_bytes = await file_obj.read()
     
     # 1. EXIF
     lat, lon = get_exif_gps(file_bytes)
     if lat and lon: return lat, lon, "High Precision (EXIF)"
 
-    # 2. Text Hint (If agent typed something)
+    # 2. Text Hint
     if text_hint:
         lat, lon, msg = resolve_text_location(text_hint)
         if lat and lon: return lat, lon, msg
-        # If text hint fails to resolve, fallback to AI Vision
 
     # 3. AI Vision
     lat, lon, reason = get_ai_location_estimate(file_bytes)
