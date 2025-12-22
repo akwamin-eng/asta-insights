@@ -33,8 +33,9 @@ app = FastAPI(
     * **World-Class GPS**: Extracts location from EXIF *or* uses AI Vision to recognize landmarks.
     * **Spatial Search**: High-speed "Near Me" queries using PostGIS.
     * **Social Signals**: Real-time sentiment analysis from Reddit/TikTok.
+    * **WhatsApp Integration**: Auto-generated deep links for instant agent chat.
     """,
-    version="2.7.0",
+    version="2.8.0",
     docs_url="/docs",
     redoc_url="/redoc"
 )
@@ -51,16 +52,17 @@ app.add_middleware(
 # --- PYDANTIC MODELS ---
 
 class PropertyUnified(BaseModel):
-    id: str
-    title: str
-    price: float
-    location: str
-    roi_score: float
-    sentiment_score: float
-    investment_vibe: str
-    latitude: float
-    longitude: float
-    last_seen_at: str
+    id: str = Field(..., description="Unique UUID of the property listing.")
+    title: str = Field(..., description="The cleaned title of the listing.")
+    price: float = Field(..., description="Price in GHS (Ghana Cedis).")
+    location: str = Field(..., description="Normalized neighborhood name.")
+    roi_score: float = Field(..., description="AI-Calculated ROI Potential (0.0 - 10.0).")
+    sentiment_score: float = Field(..., description="Market 'Vibe' Score (-1.0 to 1.0).")
+    investment_vibe: str = Field(..., description="One-line AI verdict.")
+    latitude: float = Field(..., description="Decimal Latitude for mapping.")
+    longitude: float = Field(..., description="Decimal Longitude for mapping.")
+    last_seen_at: str = Field(..., description="ISO 8601 Timestamp.")
+    whatsapp_link: Optional[str] = Field(None, description="Direct deep link to chat with agent.")
 
 class GeoJSONFeature(BaseModel):
     type: str = "Feature"
@@ -110,15 +112,40 @@ def clean_json_text(text):
 def read_root():
     return {
         "status": "online", 
-        "system": "Asta API v2.7", 
+        "system": "Asta API v2.8", 
         "docs": "/docs", 
         "message": "Welcome. Visit /docs for interactive testing."
     }
 
 @app.get("/properties/unified", response_model=List[PropertyUnified], tags=["Core Data"])
 def get_unified_properties(limit: int = 50):
+    """
+    **Primary Endpoint for Lists & Tables.**
+    Includes 'whatsapp_link' for instant lead conversion.
+    """
     response = supabase.table("v_property_details").select("*").limit(limit).execute()
-    return response.data
+    data = response.data
+    
+    # Enrich with WhatsApp Links
+    for item in data:
+        # Default fallback number if agent phone is missing (e.g. Asta Support)
+        # In a real app, this would come from the 'agent_phone' column
+        agent_phone = item.get('agent_phone', '233500000000') 
+        
+        # Clean phone number (remove +, spaces)
+        clean_phone = re.sub(r"[^0-9]", "", str(agent_phone))
+        
+        ref_id = item.get('id', 'Unknown')[-6:] # Short ref
+        title = item.get('title', 'Property')
+        
+        msg = f"Hello, I am interested in '{title}' seen on Asta Insights [Ref: {ref_id}]. Is it available?"
+        
+        # Create encoded link
+        from urllib.parse import quote
+        encoded_msg = quote(msg)
+        item['whatsapp_link'] = f"https://wa.me/{clean_phone}?text={encoded_msg}"
+
+    return data
 
 @app.get("/properties/geojson", response_model=GeoJSONCollection, tags=["Maps"])
 def get_property_heatmap():

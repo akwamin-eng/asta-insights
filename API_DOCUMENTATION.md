@@ -72,3 +72,21 @@ This is a **Dual-Engine** system:
   "message": "Extracted from EXIF Metadata (High Precision)"
 }
 eof
+
+### 8. Frontend Optimization Guide (Ghana Market)
+
+#### WhatsApp Integration
+The `/properties/unified` endpoint now returns a `whatsapp_link` field.
+* **Usage:** Bind this directly to the "Contact Agent" button.
+* **Behavior:** Opens WhatsApp with a pre-filled message including the Property Ref ID.
+
+#### Low-Data Image Loading (Crucial)
+To ensure the app is fast on mobile data, **do not** use raw image URLs.
+Append these parameters to any Supabase Storage URL:
+* **Thumbnail:** `?width=400&resize=cover&quality=60`
+* **Full Screen:** `?width=800&quality=75`
+
+### 9. Security (RLS)
+The database tables are now protected by **Row Level Security**.
+* **Public Access:** `SELECT` (Read) only.
+* **Write Access:** Restricted to Backend Services (Service Role Key).
