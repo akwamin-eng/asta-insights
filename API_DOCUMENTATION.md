@@ -197,3 +197,36 @@ It accepts an image `file` AND an optional `text_hint` string.
 **Agent Use Case:**
 > *"Agent snaps a photo of the gate. Asta reads 'GA-183-8192' and instantly places the pin on the map."*
 
+
+---
+
+## 📍 10. The Omni-Location Engine (Lazy Agent Protocol)
+
+**Endpoint:** `POST /utils/extract-gps`
+
+The `text_hint` field is now an **Omni-Input**. Agents do not need to select a format; the API automatically detects and parses the following formats in this order of priority:
+
+| Priority | Format Detected | Example | Resolution Strategy |
+| :--- | :--- | :--- | :--- |
+| **1** | **Raw Coordinates** | `5.6037, -0.1870` | Direct parsing. Validates bounds (Ghana region). |
+| **2** | **Ghana Digital Address** | `GA-182-6363` | 1. Checks internal **Cache** (fast).<br>2. Queries **GhanaPost Bridge**.<br>3. Fallback to **Google Geocoding**. |
+| **3** | **Plus Codes** | `8FQM+57` | Decodes using OpenLocationCode library. |
+| **4** | **Google Maps Link** | `maps.app.goo.gl/...` | Detects link pattern (Frontend should verify). |
+
+### 🛡️ The Self-Healing Cache
+The system now maintains a persistent `location_cache` table in Supabase.
+* **First Query:** Slower (~2s) as it hits external APIs (SperixLabs/Google).
+* **Second Query:** Instant (~50ms) as it serves from your own proprietary database.
+
+### 📝 Integration Guide for Frontend
+**Input Field Label:** "Location (Paste GPS, Ghana Post, or Coordinates)"
+**Behavior:**
+1. User uploads Image (System checks EXIF).
+2. If EXIF fails, user types "GA-182-6363" into the text field.
+3. System resolves address and autosets the map pin.
+
+**Example Request:**
+```bash
+curl -X POST ... \
+  -F "file=@photo.jpg" \
+  -F "text_hint=5.560, -0.205"
