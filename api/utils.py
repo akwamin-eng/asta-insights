@@ -87,7 +87,6 @@ def cache_address(address: str, lat: float, lon: float, source: str):
             "longitude": lon,
             "source": source
         }).execute()
-        print(f"✅ Cached {address}")
     except Exception as e:
         print(f"Cache Write Failed: {e}")
 
@@ -121,31 +120,54 @@ def query_ghana_post_direct(address: str) -> Tuple[Optional[float], Optional[flo
         pass
     return None, None, ""
 
-def geocode_with_google(address_text: str) -> Tuple[Optional[float], Optional[float]]:
-    if not GOOGLE_API_KEY: return None, None
+def geocode_with_google(address_text: str) -> Tuple[Optional[float], Optional[float], str]:
+    """
+    Enhanced Geocoder:
+    1. Handles "Ghana, Ghana" duplication.
+    2. Returns specific error messages.
+    """
+    if not GOOGLE_API_KEY: 
+        return None, None, "Missing Google API Key on Server"
+
+    # Smart Context: Only append Ghana if not present
+    query_address = address_text
+    if "ghana" not in address_text.lower():
+        query_address = f"{address_text}, Ghana"
+    
     try:
-        # Append context to help Google with short codes/landmarks
         url = "https://maps.googleapis.com/maps/api/geocode/json"
-        params = {"address": f"{address_text}, Ghana", "key": GOOGLE_API_KEY}
+        params = {"address": query_address, "key": GOOGLE_API_KEY}
+        
+        # Log query for debugging (visible in Render logs)
+        print(f"🗺️ Google Geocoding Query: {query_address}")
+        
         resp = requests.get(url, params=params, timeout=5)
         data = resp.json()
+        
         if data['status'] == 'OK' and len(data['results']) > 0:
             location = data['results'][0]['geometry']['location']
-            if data['results'][0].get('geometry', {}).get('location_type') == 'ROOFTOP':
-                 cache_address(normalize_ghana_post(address_text), location['lat'], location['lng'], 'google')
-            return location['lat'], location['lng']
-    except Exception:
-        pass
-    return None, None
+            lat, lon = location['lat'], location['lng']
+            
+            # Cache High-Confidence results (Rooftop/Geometric Center)
+            loc_type = data['results'][0].get('geometry', {}).get('location_type')
+            if loc_type in ['ROOFTOP', 'GEOMETRIC_CENTER']:
+                 cache_address(normalize_ghana_post(address_text), lat, lon, 'google')
+                 
+            return lat, lon, "" # Success
+            
+        return None, None, f"Google API Error: {data.get('status')} - {data.get('error_message', 'No Details')}"
+        
+    except Exception as e:
+        return None, None, f"Google Connection Error: {str(e)}"
 
 def resolve_text_location(text_input: str) -> Tuple[Optional[float], Optional[float], str]:
     """
-    Omni-Parser with True Fall-Through Logic.
-    Does NOT return early unless a match is successfully resolved.
+    Omni-Parser with 'Catch-All' and Bubble-Up Errors.
     """
     if not text_input: return None, None, ""
     
     clean_text = text_input.strip().upper()
+    debug_log = [] # Collect errors for final report if all fail
 
     # 1. ATTEMPT: Raw Coordinates
     coord_match = re.search(LAT_LON_REGEX, text_input)
@@ -161,32 +183,26 @@ def resolve_text_location(text_input: str) -> Tuple[Optional[float], Optional[fl
         raw_address = gp_match.group(0)
         lat, lon, status_msg = query_ghana_post_direct(raw_address)
         if lat and lon: return lat, lon, f"{status_msg}: {raw_address}"
-        # If Regex matched but Bridge/Cache failed, we CONTINUE down to Google Fallback
-        # We do NOT return failure here.
+        debug_log.append(f"GhanaPost Failed ({status_msg})")
 
     # 3. ATTEMPT: Plus Codes (Local Decode)
     pc_match = re.search(PLUS_CODE_REGEX, clean_text)
     if pc_match:
         code = pc_match.group(0)
         try:
-            # Only returns if successfully decoded locally
             if olc.isValid(code) and olc.isFull(code):
                 decoded = olc.decode(code)
                 return decoded.latitudeCenter, decoded.longitudeCenter, f"Decoded Plus Code: {code}"
         except: pass
-        # If Regex matched but Local Decode failed (e.g. short code P5P7+2W),
-        # we CONTINUE down to Google Fallback.
     
     # 4. FINAL FALLBACK: Google Geocoding (Catch-All)
-    # This catches:
-    # - Short Plus Codes ("P5P7+2W")
-    # - Landmarks ("Accra Mall")
-    # - Failed GhanaPost addresses that Google might know
-    lat, lon = geocode_with_google(text_input)
+    lat, lon, g_error = geocode_with_google(text_input)
     if lat and lon:
         return lat, lon, f"Resolved via Google (Catch-All): {text_input}"
+    
+    debug_log.append(f"Google Fallback Failed ({g_error})")
 
-    return None, None, f"Could not resolve location: '{text_input}'"
+    return None, None, f"Could not resolve '{text_input}'. Debug: {'; '.join(debug_log)}"
 
 async def extract_gps_from_file(file_obj, text_hint: str = None) -> Tuple[Optional[float], Optional[float], str]:
     file_bytes = await file_obj.read()
