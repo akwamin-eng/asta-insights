@@ -2,7 +2,7 @@ import os
 import json
 import re
 from typing import List, Optional, Dict, Any
-from fastapi import FastAPI, HTTPException, Query, Body, File, UploadFile
+from fastapi import FastAPI, HTTPException, Query, Body, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
@@ -25,7 +25,7 @@ client = genai.Client(api_key=os.environ.get("GOOGLE_API_KEY"))
 app = FastAPI(
     title="Asta Insights API",
     description="The Central Brain for Asta Real Estate Intelligence.",
-    version="3.1.0"
+    version="3.2.0"
 )
 
 app.add_middleware(
@@ -248,7 +248,7 @@ def get_search_suggestions():
         ]
     }
 
-# --- INCLUDE EXISTING ENDPOINTS (Search, GeoJSON, GPS, Social) BELOW ---
+# --- EXISTING ENDPOINTS (Search, GeoJSON, GPS, Social) ---
 
 class SearchQuery(BaseModel):
     query: str
@@ -315,10 +315,33 @@ def ai_semantic_search(search: SearchQuery):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/utils/extract-gps", response_model=GPSResult, tags=["Utilities"])
-async def extract_gps(file: UploadFile = File(...)):
-    lat, lon, msg = await extract_gps_from_file(file)
-    if lat and lon: return {"found": True, "latitude": lat, "longitude": lon, "message": msg}
-    return {"found": False, "message": msg}
+async def extract_gps(
+    file: UploadFile = File(...), 
+    text_hint: Optional[str] = Form(None) # <--- UPDATED: Accepts "GA-123-4567" from form
+):
+    """
+    **The 'Lazy Agent' Locator.**
+    
+    Accepts an Image AND an optional Text Hint.
+    1. Checks Image EXIF.
+    2. Checks Text Hint for 'GA-XX-XXX' (Ghana Post) or Plus Codes.
+    3. Checks Image Visuals (AI Vision).
+    """
+    try:
+        # Pass the hint to the orchestrator in utils
+        lat, lon, msg = await extract_gps_from_file(file, text_hint)
+        
+        if lat is not None and lon is not None:
+            return {
+                "found": True, 
+                "latitude": lat, 
+                "longitude": lon, 
+                "message": msg
+            }
+        else:
+            return {"found": False, "message": msg}
+    except Exception as e:
+        return {"found": False, "message": f"Error processing: {str(e)}"}
 
 @app.get("/signals/latest", response_model=List[SocialSignal], tags=["Social Intel"])
 def get_social_signals(limit: int = 10):
