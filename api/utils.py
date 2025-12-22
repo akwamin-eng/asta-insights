@@ -117,12 +117,9 @@ def query_ghana_post_direct(address: str) -> Tuple[Optional[float], Optional[flo
                 if lat and lon:
                     cache_address(formatted_address, lat, lon, 'bridge')
                     return lat, lon, "Verified via GhanaPostGPS"
-                return None, None, "Address found but coordinates missing."
-            else:
-                return None, None, "Address not found in GhanaPost Database"
-        return None, None, f"Bridge Error: {resp.status_code}"
-    except Exception as e:
-        return None, None, f"GhanaPost Connection Failed: {str(e)}"
+    except Exception:
+        pass
+    return None, None, ""
 
 def geocode_with_google(address_text: str) -> Tuple[Optional[float], Optional[float]]:
     if not GOOGLE_API_KEY: return None, None
@@ -143,13 +140,14 @@ def geocode_with_google(address_text: str) -> Tuple[Optional[float], Optional[fl
 
 def resolve_text_location(text_input: str) -> Tuple[Optional[float], Optional[float], str]:
     """
-    Omni-Parser with 'Catch-All' Fallback.
+    Omni-Parser with True Fall-Through Logic.
+    Does NOT return early unless a match is successfully resolved.
     """
     if not text_input: return None, None, ""
     
     clean_text = text_input.strip().upper()
 
-    # 1. Raw Coordinates
+    # 1. ATTEMPT: Raw Coordinates
     coord_match = re.search(LAT_LON_REGEX, text_input)
     if coord_match:
         try:
@@ -157,35 +155,38 @@ def resolve_text_location(text_input: str) -> Tuple[Optional[float], Optional[fl
             return lat, lon, "Detected Raw Coordinates"
         except ValueError: pass
 
-    # 2. Ghana Post GPS
+    # 2. ATTEMPT: Ghana Post GPS
     gp_match = re.search(GHANA_POST_REGEX, clean_text)
     if gp_match:
         raw_address = gp_match.group(0)
         lat, lon, status_msg = query_ghana_post_direct(raw_address)
         if lat and lon: return lat, lon, f"{status_msg}: {raw_address}"
-        # Fallback to Google if Bridge fails
-        lat, lon = geocode_with_google(raw_address)
-        if lat and lon: return lat, lon, f"Resolved via Google Maps: {raw_address}"
-        return None, None, f"Parsing Failed: {status_msg}"
+        # If Regex matched but Bridge/Cache failed, we CONTINUE down to Google Fallback
+        # We do NOT return failure here.
 
-    # 3. Plus Codes (Local Decode Attempt)
+    # 3. ATTEMPT: Plus Codes (Local Decode)
     pc_match = re.search(PLUS_CODE_REGEX, clean_text)
     if pc_match:
         code = pc_match.group(0)
         try:
-            # Only works for FULL codes (6GCR+XL)
+            # Only returns if successfully decoded locally
             if olc.isValid(code) and olc.isFull(code):
                 decoded = olc.decode(code)
                 return decoded.latitudeCenter, decoded.longitudeCenter, f"Decoded Plus Code: {code}"
         except: pass
+        # If Regex matched but Local Decode failed (e.g. short code P5P7+2W),
+        # we CONTINUE down to Google Fallback.
     
-    # 4. CATCH-ALL: Send to Google 
-    # This handles Short Plus Codes ("P5P7+2W") and Landmarks ("Accra Mall")
+    # 4. FINAL FALLBACK: Google Geocoding (Catch-All)
+    # This catches:
+    # - Short Plus Codes ("P5P7+2W")
+    # - Landmarks ("Accra Mall")
+    # - Failed GhanaPost addresses that Google might know
     lat, lon = geocode_with_google(text_input)
     if lat and lon:
         return lat, lon, f"Resolved via Google (Catch-All): {text_input}"
 
-    return None, None, ""
+    return None, None, f"Could not resolve location: '{text_input}'"
 
 async def extract_gps_from_file(file_obj, text_hint: str = None) -> Tuple[Optional[float], Optional[float], str]:
     file_bytes = await file_obj.read()
