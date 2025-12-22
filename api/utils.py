@@ -2,7 +2,7 @@ import os
 import re
 import json
 import requests
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Any
 from io import BytesIO
 from PIL import Image
 from PIL.ExifTags import TAGS, GPSTAGS
@@ -63,16 +63,36 @@ def normalize_ghana_post(address: str) -> str:
         return f"{clean[:2]}-{clean[2:5]}-{clean[5:]}"
     return address
 
-def get_coords_from_dict(data: dict) -> Tuple[Optional[float], Optional[float]]:
-    """Helper to hunt for lat/lon keys case-insensitively"""
-    # Normalize keys to lowercase
-    keys = {k.lower(): v for k, v in data.items()}
-    
-    lat = keys.get('latitude') or keys.get('nlat') or keys.get('lat')
-    lon = keys.get('longitude') or keys.get('wlong') or keys.get('long') or keys.get('lng')
-    
-    if lat and lon:
-        return float(lat), float(lon)
+def recursive_find_coords(data: Any) -> Tuple[Optional[float], Optional[float]]:
+    """
+    Nuclear Option: Recursively hunts for lat/lon in nested JSON.
+    """
+    if isinstance(data, dict):
+        # 1. Check current level
+        keys = {k.lower(): v for k, v in data.items()}
+        # Common keys in GhanaPost APIs
+        lat = keys.get('centerlatitude') or keys.get('nlat') or keys.get('latitude') or keys.get('lat')
+        lon = keys.get('centerlongitude') or keys.get('wlong') or keys.get('longitude') or keys.get('lng') or keys.get('long')
+        
+        if lat is not None and lon is not None:
+            try:
+                return float(lat), float(lon)
+            except:
+                pass # Value might be empty string or invalid
+
+        # 2. Recurse into values
+        for value in data.values():
+            found_lat, found_lon = recursive_find_coords(value)
+            if found_lat and found_lon:
+                return found_lat, found_lon
+                
+    elif isinstance(data, list):
+        # Recurse into list items
+        for item in data:
+            found_lat, found_lon = recursive_find_coords(item)
+            if found_lat and found_lon:
+                return found_lat, found_lon
+
     return None, None
 
 def query_ghana_post_direct(address: str) -> Tuple[Optional[float], Optional[float], str]:
@@ -89,18 +109,19 @@ def query_ghana_post_direct(address: str) -> Tuple[Optional[float], Optional[flo
         
         if resp.status_code == 200:
             data = resp.json()
-            if data.get('found') and data.get('data'):
-                # Try to parse the Table list
-                if isinstance(data['data'], dict) and 'Table' in data['data']:
-                     table_item = data['data']['Table'][0]
-                     lat, lon = get_coords_from_dict(table_item)
-                     if lat: return lat, lon, "Verified via GhanaPostGPS"
+            if data.get('found'):
+                # Use the recursive hunter to find coordinates ANYWHERE in the response
+                lat, lon = recursive_find_coords(data)
                 
-                # Sometimes it returns data directly not in a Table
-                lat, lon = get_coords_from_dict(data['data'])
-                if lat: return lat, lon, "Verified via GhanaPostGPS"
+                if lat and lon:
+                    return lat, lon, "Verified via GhanaPostGPS"
                 
-                return None, None, f"Address found but coordinates missing. Keys: {list(data.get('data', {}).keys())}"
+                # Debugging: If still failing, return the keys found in the Table if it exists
+                debug_keys = "Unknown"
+                if 'data' in data and 'Table' in data['data'] and len(data['data']['Table']) > 0:
+                    debug_keys = list(data['data']['Table'][0].keys())
+                
+                return None, None, f"Address found but keys mismatch. Found keys: {debug_keys}"
             else:
                 return None, None, "Address not found in GhanaPost Database"
         return None, None, f"Bridge Error: {resp.status_code}"
