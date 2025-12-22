@@ -31,9 +31,10 @@ app = FastAPI(
     * **GeoJSON Heatmaps**: Optimized for Mapbox/Google Maps integration.
     * **Semantic Search**: "ChatGPT-style" search that translates natural language to SQL.
     * **GPS Extraction**: Auto-locates properties via EXIF image data.
+    * **Spatial Search**: High-speed "Near Me" queries using PostGIS.
     * **Social Signals**: Real-time sentiment analysis from Reddit/TikTok.
     """,
-    version="2.5.0",
+    version="2.6.0",
     docs_url="/docs",
     redoc_url="/redoc"
 )
@@ -91,6 +92,11 @@ class SocialSignal(BaseModel):
     summary: str = Field(..., description="One-sentence AI summary of the complaint/insight.")
     created_at: str
 
+class NearbyQuery(BaseModel):
+    latitude: float = Field(..., example=5.6037, description="User's current latitude.")
+    longitude: float = Field(..., example=-0.1870, description="User's current longitude.")
+    radius_km: float = Field(2.0, example=5.0, description="Search radius in Kilometers.")
+
 # --- HELPER FUNCTIONS ---
 def clean_json_text(text):
     if not text: return ""
@@ -104,7 +110,7 @@ def clean_json_text(text):
 def read_root():
     return {
         "status": "online", 
-        "system": "Asta API v2.5", 
+        "system": "Asta API v2.6", 
         "docs": "/docs", 
         "message": "Welcome. Visit /docs for interactive testing."
     }
@@ -149,6 +155,34 @@ def get_property_heatmap():
         }
         features.append(feat)
     return {"type": "FeatureCollection", "features": features}
+
+@app.post("/properties/nearby", tags=["Maps"])
+def find_nearby_properties(query: NearbyQuery):
+    """
+    **Geo-Spatial Radius Search (PostGIS).**
+    
+    Uses high-speed spatial indexing to find properties within `radius_km` of the user.
+    Returns results sorted by distance (closest first).
+    """
+    try:
+        # Convert KM to Meters for PostGIS
+        radius_meters = query.radius_km * 1000
+        
+        # Call the SQL Function (RPC)
+        response = supabase.rpc("search_nearby_properties", {
+            "user_lat": query.latitude, 
+            "user_lon": query.longitude, 
+            "radius_meters": radius_meters
+        }).execute()
+        
+        return {
+            "center": {"lat": query.latitude, "lon": query.longitude},
+            "radius_meters": radius_meters,
+            "count": len(response.data),
+            "results": response.data
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Spatial Query Failed: {str(e)}")
 
 @app.post("/search/ai", response_model=SearchResponse, tags=["AI Features"])
 def ai_semantic_search(search: SearchQuery):
