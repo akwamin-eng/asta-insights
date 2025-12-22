@@ -120,3 +120,48 @@ const optimize = (url, width) => `${url}?width=${width}&resize=cover&quality=60`
 <img src={optimize(property.image_url, 400)} alt={property.title} />
 Why? Failing to implement this will result in 10s+ load times on 4G networks and immediate user churn.
 
+
+---
+
+## 🧠 Smart UX 2.0: Context & Conversation
+
+### 1. Context-Aware Trust (`why_it_scored`)
+The system now detects if a listing is for **Rent** or **Sale** and adjusts the "Trust Bullets" accordingly.
+
+**Frontend Implementation:**
+Simply render the strings in the `why_it_scored` array. The API handles the logic.
+
+| Scenario | What the User Sees |
+| :--- | :--- |
+| **High ROI Sale** | `["💎 Rare High-Yield Asset", "📈 Strong Capital Appreciation"]` |
+| **Luxury Rental** | `["🌟 Premium Lifestyle Area", "🔥 High Market Interest"]` |
+| **Budget Rental** | `["💰 Competitive Rental Price", "⚖️ Fair Market Rent"]` |
+
+> **Note:** We have replaced specific platform names (TikTok/Reddit) with "High Market Interest" to maintain a proprietary feel.
+
+### 2. Human-Like Map Messaging (`human_message`)
+The `/properties/nearby` endpoint now acts like a concierge. If it has to expand the search radius to find results, it generates a friendly explanation.
+
+**New Payload (Request):**
+```json
+{
+  "latitude": 5.603,
+  "longitude": -0.187,
+  "radius_km": 2.0,
+  "location_name": "Osu" // Optional: Helps generate better messages
+}
+New Response Field:
+
+human_message: A ready-to-display string explaining the result.
+
+Frontend Implementation: Display human_message in a toast or summary bar above the map results.
+
+Scenario A (Found nearby): "Found 12 homes within 2km."
+
+Scenario B (Expanded Search): "We couldn't find the exact property in Osu, but we found similar listings 5km away."
+
+Scenario C (Zero Results): "We couldn't find any listings in this area just yet."
+
+3. Rent vs. Buy Intelligence
+The API uses price thresholds (< 20k GHS) and title keywords ("Rent", "Lease") to automatically categorize listings. You do not need to manually filter these for the "Trust Bullets" to work; the backend handles the context switching.
+
