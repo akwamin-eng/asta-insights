@@ -1,37 +1,42 @@
 import os
-import requests
+from datetime import datetime
 from dotenv import load_dotenv
 from supabase import create_client
+from web_scrapers.economic_scraper import get_ghana_economic_data
 
-# Only load .env if it exists (local dev)
-if os.path.exists(".env"):
-    load_dotenv()
+load_dotenv()
 
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+supabase = create_client(os.environ.get("SUPABASE_URL"), os.environ.get("SUPABASE_SERVICE_ROLE_KEY"))
 
-if not SUPABASE_URL or not SUPABASE_KEY:
-    print("❌ Error: Missing Supabase credentials in environment.")
-    exit(1)
-
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-API_URL = "https://open.er-api.com/v6/latest/USD"
-
-def run():
-    print("💰 Fetching Currency Data...")
+def update_daily_stats():
+    print("🌍 Refreshing Ghana Economic Indicators...")
     try:
-        response = requests.get(API_URL)
-        data = response.json()
-        ghs_rate = data['rates']['GHS']
-        print(f"   Current Rate: 1 USD = {ghs_rate} GHS")
-
-        supabase.table("economic_indicators").insert({
-            "indicator_type": "USD_GHS",
-            "value": ghs_rate
-        }).execute()
-        print("✅ Currency data saved.")
+        data = get_ghana_economic_data()
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f"❌ Scraper Error: {e}")
+        return
+
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    # Map indicators to the database structure
+    indicators = [
+        {"indicator_type": "USD_GHS", "value": data.get('usd_ghs'), "recorded_at": today},
+        {"indicator_type": "INFLATION", "value": data.get('inflation'), "recorded_at": today}
+    ]
+
+    # IDEMPOTENT UPSERT: recorded_at + indicator_type are the unique pair
+    for record in indicators:
+        if record["value"] is None:
+            continue
+            
+        try:
+            supabase.table("economic_indicators").upsert(
+                record, 
+                on_conflict="indicator_type,recorded_at"
+            ).execute()
+            print(f"✅ Updated {record['indicator_type']}: {record['value']}")
+        except Exception as e:
+            print(f"❌ Failed to update {record['indicator_type']}: {e}")
 
 if __name__ == "__main__":
-    run()
+    update_daily_stats()

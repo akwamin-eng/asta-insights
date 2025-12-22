@@ -1,0 +1,12 @@
+Metadata-Version: 2.4
+Name: asta-insights
+Version: 0.1.0
+Requires-Dist: pandas
+Requires-Dist: python-dotenv
+Requires-Dist: google-genai
+Requires-Dist: supabase
+Requires-Dist: requests
+Requires-Dist: pyyaml
+Requires-Dist: grpcio<1.68.0,>=1.62.3
+Requires-Dist: grpcio-status<1.68.0,>=1.62.3
+Requires-Dist: litellm==1.80.10

@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "asta-insights"
+version = "0.1.0"
+dependencies = [
+    "pandas",
+    "python-dotenv",
+    "google-genai",
+    "supabase",
+    "requests",
+    "pyyaml",
+    "grpcio>=1.62.3,<1.68.0",
+    "grpcio-status>=1.62.3,<1.68.0",
+    "litellm==1.80.10"
+]
+
+[tool.setuptools]
+package-dir = {"" = "."}
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["processing*", "scrapers*", "scripts*", "web_scrapers*", "storage*", "utils*"]

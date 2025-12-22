@@ -1,0 +1,9 @@
+pandas
+python-dotenv
+google-genai
+supabase
+requests
+pyyaml
+grpcio<1.68.0,>=1.62.3
+grpcio-status<1.68.0,>=1.62.3
+litellm==1.80.10
