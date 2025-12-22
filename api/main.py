@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 from supabase import create_client
 from google import genai
 from google.genai import types
+from urllib.parse import quote
 
 # Import GPS Utility
 from api.utils import extract_gps_from_file
@@ -23,24 +24,10 @@ client = genai.Client(api_key=os.environ.get("GOOGLE_API_KEY"))
 # --- APP CONFIGURATION ---
 app = FastAPI(
     title="Asta Insights API",
-    description="""
-    The Central Brain for Asta Real Estate Intelligence.
-    
-    ## Key Features:
-    * **Unified Property Data**: Normalized listings with AI-enriched ROI scores.
-    * **GeoJSON Heatmaps**: Optimized for Mapbox/Google Maps integration.
-    * **Semantic Search**: "ChatGPT-style" search that translates natural language to SQL.
-    * **World-Class GPS**: Extracts location from EXIF *or* uses AI Vision to recognize landmarks.
-    * **Spatial Search**: High-speed "Near Me" queries using PostGIS.
-    * **Social Signals**: Real-time sentiment analysis from Reddit/TikTok.
-    * **WhatsApp Integration**: Auto-generated deep links for instant agent chat.
-    """,
-    version="2.8.0",
-    docs_url="/docs",
-    redoc_url="/redoc"
+    description="The Central Brain for Asta Real Estate Intelligence.",
+    version="3.1.0"
 )
 
-# Enable CORS (Allow All for MVP)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -49,32 +36,222 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- PYDANTIC MODELS ---
+# --- MODELS ---
 
 class PropertyUnified(BaseModel):
-    id: str = Field(..., description="Unique UUID of the property listing.")
-    title: str = Field(..., description="The cleaned title of the listing.")
-    price: float = Field(..., description="Price in GHS (Ghana Cedis).")
-    location: str = Field(..., description="Normalized neighborhood name.")
-    roi_score: float = Field(..., description="AI-Calculated ROI Potential (0.0 - 10.0).")
-    sentiment_score: float = Field(..., description="Market 'Vibe' Score (-1.0 to 1.0).")
-    investment_vibe: str = Field(..., description="One-line AI verdict.")
-    latitude: float = Field(..., description="Decimal Latitude for mapping.")
-    longitude: float = Field(..., description="Decimal Longitude for mapping.")
-    last_seen_at: str = Field(..., description="ISO 8601 Timestamp.")
-    whatsapp_link: Optional[str] = Field(None, description="Direct deep link to chat with agent.")
+    id: str
+    title: str
+    price: float
+    location: str
+    roi_score: float
+    sentiment_score: float
+    investment_vibe: str
+    latitude: float
+    longitude: float
+    last_seen_at: str
+    whatsapp_link: Optional[str]
+    # "Trust Bullets" - Context aware (Rent vs Buy)
+    why_it_scored: List[str] = Field(..., description="List of reasons justifying the score.")
 
-class GeoJSONFeature(BaseModel):
-    type: str = "Feature"
-    geometry: Dict[str, Any]
-    properties: Dict[str, Any]
+class SuggestionChip(BaseModel):
+    label: str
+    emoji: str
+    query_text: str
+    category: str
 
-class GeoJSONCollection(BaseModel):
-    type: str = "FeatureCollection"
-    features: List[GeoJSONFeature]
+class SearchSuggestions(BaseModel):
+    headline: str
+    chips: List[SuggestionChip]
+
+class NearbyQuery(BaseModel):
+    latitude: float
+    longitude: float
+    radius_km: float = 2.0
+    # Optional: If the frontend knows the name (e.g. from Google Places), pass it for better messaging
+    location_name: Optional[str] = None 
+
+# --- HELPER FUNCTIONS ---
+
+def clean_json_text(text):
+    if not text: return ""
+    text = re.sub(r"```json\s*", "", text)
+    text = re.sub(r"```\s*", "", text)
+    return text.strip()
+
+def determine_listing_type(item: Dict) -> str:
+    """Heuristic to guess if Rent or Sale if not explicit in DB."""
+    title = item.get('title', '').lower()
+    price = item.get('price', 0)
+    
+    # Simple Heuristics for MVP
+    if 'rent' in title or 'lease' in title or 'month' in title:
+        return 'RENT'
+    # In Ghana, prices < 20,000 usually imply rent (unless it's land/uncompleted)
+    if price < 20000: 
+        return 'RENT'
+    return 'SALE'
+
+def generate_trust_bullets(item: Dict) -> List[str]:
+    """
+    Generates Context-Aware 'Why' bullets.
+    Differentiates between Renter needs and Buyer needs.
+    """
+    reasons = []
+    listing_type = determine_listing_type(item)
+    
+    # 1. Location Logic (Universal)
+    loc = item.get('location', '').lower()
+    is_prime = any(x in loc for x in ['airport', 'cantonments', 'east legon', 'labone'])
+    is_emerging = any(x in loc for x in ['oyarifa', 'pok uase', 'prampram', 'aburi'])
+
+    # 2. Context Logic: BUY vs RENT
+    if listing_type == 'SALE':
+        # Buyer/Investor Focus: ROI, Growth, Yield
+        score = item.get('roi_score', 0)
+        if score >= 9.0: reasons.append("💎 Rare High-Yield Asset")
+        elif score >= 8.0: reasons.append("📈 Strong Capital Appreciation")
+        
+        if is_prime: reasons.append("📍 Blue-Chip Location")
+        if is_emerging: reasons.append("🚀 High Growth Corridor")
+        
+    else: # RENT
+        # Renter Focus: Price, Lifestyle, Safety
+        if is_prime: reasons.append("🌟 Premium Lifestyle Area")
+        if is_emerging: reasons.append("💰 Competitive Rental Price")
+        
+        # Heuristic for "Fair Price" (MVP: if score is high, assume price is good)
+        if item.get('roi_score', 0) > 7.5:
+            reasons.append("⚖️ Fair Market Rent")
+
+    # 3. Social Logic (Generalized - Competitive Edge)
+    # Never say "TikTok". Say "Digital Engagement".
+    sentiment = item.get('sentiment_score', 0)
+    if sentiment > 0.6: 
+        reasons.append("🔥 High Market Interest") # Vague but exciting
+    elif sentiment > 0.3:
+        reasons.append("👀 Frequently Viewed")
+
+    # Fallback
+    if not reasons:
+        reasons.append("✅ Verified Listing")
+        
+    return reasons
+
+# --- ENDPOINTS ---
+
+@app.get("/properties/unified", response_model=List[PropertyUnified], tags=["Core Data"])
+def get_unified_properties(limit: int = 50):
+    response = supabase.table("v_property_details").select("*").limit(limit).execute()
+    data = response.data
+    
+    for item in data:
+        # WhatsApp Logic
+        agent_phone = item.get('agent_phone', '233500000000') 
+        clean_phone = re.sub(r"[^0-9]", "", str(agent_phone))
+        ref_id = item.get('id', 'Unknown')[-6:]
+        title = item.get('title', 'Property')
+        msg = quote(f"Hello, I am interested in '{title}' seen on Asta Insights [Ref: {ref_id}]. Is it available?")
+        item['whatsapp_link'] = f"https://wa.me/{clean_phone}?text={msg}"
+        
+        # CONTEXT-AWARE TRUST BULLETS
+        item['why_it_scored'] = generate_trust_bullets(item)
+
+    return data
+
+@app.post("/properties/nearby", tags=["Maps"])
+def find_nearby_properties(query: NearbyQuery):
+    """
+    **Human-Like Radius Search.**
+    Returns a friendly message if the search had to be expanded.
+    """
+    user_lat = query.latitude
+    user_lon = query.longitude
+    current_radius = query.radius_km
+    
+    expansion_tiers = [current_radius, 5.0, 15.0, 50.0]
+    expansion_tiers = [r for r in expansion_tiers if r >= current_radius]
+    if not expansion_tiers: expansion_tiers = [current_radius]
+
+    final_results = []
+    used_radius = current_radius
+
+    for radius in expansion_tiers:
+        radius_meters = radius * 1000
+        try:
+            response = supabase.rpc("search_nearby_properties", {
+                "user_lat": user_lat, 
+                "user_lon": user_lon, 
+                "radius_meters": radius_meters
+            }).execute()
+            
+            if response.data and len(response.data) > 0:
+                final_results = response.data
+                used_radius = radius
+                break 
+        except Exception:
+            continue
+
+    # HUMAN MESSAGING LOGIC
+    friendly_msg = f"Found {len(final_results)} homes within {used_radius}km."
+    
+    # Did we have to expand?
+    if used_radius > query.radius_km:
+        loc_name = query.location_name if query.location_name else "your exact location"
+        
+        # Dynamic Human Response
+        friendly_msg = (
+            f"We couldn't find the exact property in {loc_name}, "
+            f"but we found similar listings {int(used_radius)}km away."
+        )
+    elif len(final_results) == 0:
+         friendly_msg = "We couldn't find any listings in this area just yet."
+
+    return {
+        "center": {"lat": user_lat, "lon": user_lon},
+        "radius_km_requested": query.radius_km,
+        "radius_km_actual": used_radius,
+        "expanded_search": used_radius > query.radius_km,
+        "human_message": friendly_msg, # <--- Frontend displays this directly
+        "count": len(final_results),
+        "results": final_results
+    }
+
+@app.get("/search/suggestions", response_model=SearchSuggestions, tags=["AI Features"])
+def get_search_suggestions():
+    return {
+        "headline": "What are you looking for?",
+        "chips": [
+            {
+                "label": "High Yield", 
+                "emoji": "💰", 
+                "query_text": "Show me high ROI investment properties in Accra",
+                "category": "Investment"
+            },
+            {
+                "label": "Secure Living", 
+                "emoji": "🛡️", 
+                "query_text": "Gated communities with security in East Legon or Cantonments",
+                "category": "Lifestyle"
+            },
+            {
+                "label": "Affordable Rentals", 
+                "emoji": "🔑", 
+                "query_text": "1 or 2 bedroom apartments for rent under 3000 cedis",
+                "category": "Rent"
+            },
+            {
+                "label": "Short Stay", 
+                "emoji": "🧳", 
+                "query_text": "Apartments suitable for Airbnb near the Airport",
+                "category": "Investment"
+            }
+        ]
+    }
+
+# --- INCLUDE EXISTING ENDPOINTS (Search, GeoJSON, GPS, Social) BELOW ---
 
 class SearchQuery(BaseModel):
-    query: str = Field(..., example="3 bedroom house in Osu under 500k")
+    query: str
 
 class SearchResponse(BaseModel):
     interpreted_filters: Dict[str, Any]
@@ -94,58 +271,14 @@ class SocialSignal(BaseModel):
     summary: str
     created_at: str
 
-class NearbyQuery(BaseModel):
-    latitude: float = Field(..., example=5.6037)
-    longitude: float = Field(..., example=-0.1870)
-    radius_km: float = Field(2.0, example=5.0)
+class GeoJSONFeature(BaseModel):
+    type: str = "Feature"
+    geometry: Dict[str, Any]
+    properties: Dict[str, Any]
 
-# --- HELPER FUNCTIONS ---
-def clean_json_text(text):
-    if not text: return ""
-    text = re.sub(r"```json\s*", "", text)
-    text = re.sub(r"```\s*", "", text)
-    return text.strip()
-
-# --- ENDPOINTS ---
-
-@app.get("/", tags=["System"])
-def read_root():
-    return {
-        "status": "online", 
-        "system": "Asta API v2.8", 
-        "docs": "/docs", 
-        "message": "Welcome. Visit /docs for interactive testing."
-    }
-
-@app.get("/properties/unified", response_model=List[PropertyUnified], tags=["Core Data"])
-def get_unified_properties(limit: int = 50):
-    """
-    **Primary Endpoint for Lists & Tables.**
-    Includes 'whatsapp_link' for instant lead conversion.
-    """
-    response = supabase.table("v_property_details").select("*").limit(limit).execute()
-    data = response.data
-    
-    # Enrich with WhatsApp Links
-    for item in data:
-        # Default fallback number if agent phone is missing (e.g. Asta Support)
-        # In a real app, this would come from the 'agent_phone' column
-        agent_phone = item.get('agent_phone', '233500000000') 
-        
-        # Clean phone number (remove +, spaces)
-        clean_phone = re.sub(r"[^0-9]", "", str(agent_phone))
-        
-        ref_id = item.get('id', 'Unknown')[-6:] # Short ref
-        title = item.get('title', 'Property')
-        
-        msg = f"Hello, I am interested in '{title}' seen on Asta Insights [Ref: {ref_id}]. Is it available?"
-        
-        # Create encoded link
-        from urllib.parse import quote
-        encoded_msg = quote(msg)
-        item['whatsapp_link'] = f"https://wa.me/{clean_phone}?text={encoded_msg}"
-
-    return data
+class GeoJSONCollection(BaseModel):
+    type: str = "FeatureCollection"
+    features: List[GeoJSONFeature]
 
 @app.get("/properties/geojson", response_model=GeoJSONCollection, tags=["Maps"])
 def get_property_heatmap():
@@ -154,112 +287,40 @@ def get_property_heatmap():
     for item in response.data:
         feat = {
             "type": "Feature",
-            "geometry": {
-                "type": "Point",
-                "coordinates": [item['longitude'], item['latitude']]
-            },
-            "properties": {
-                "id": item['id'],
-                "title": item['title'],
-                "price": item['price'],
-                "roi_score": item['roi_score'],
-                "vibe": item['investment_vibe']
-            }
+            "geometry": {"type": "Point", "coordinates": [item['longitude'], item['latitude']]},
+            "properties": {"id": item['id'], "price": item['price'], "roi_score": item['roi_score']}
         }
         features.append(feat)
     return {"type": "FeatureCollection", "features": features}
 
-@app.post("/properties/nearby", tags=["Maps"])
-def find_nearby_properties(query: NearbyQuery):
-    try:
-        radius_meters = query.radius_km * 1000
-        response = supabase.rpc("search_nearby_properties", {
-            "user_lat": query.latitude, 
-            "user_lon": query.longitude, 
-            "radius_meters": radius_meters
-        }).execute()
-        
-        return {
-            "center": {"lat": query.latitude, "lon": query.longitude},
-            "radius_meters": radius_meters,
-            "count": len(response.data),
-            "results": response.data
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Spatial Query Failed: {str(e)}")
-
 @app.post("/search/ai", response_model=SearchResponse, tags=["AI Features"])
 def ai_semantic_search(search: SearchQuery):
     user_query = search.query
-    print(f"🧠 AI Search processing: '{user_query}'")
-    
     prompt = f"""
-    You are a SQL Filter Generator for a Real Estate DB.
-    User Query: "{user_query}"
-    Extract search intent into JSON keys:
-    - location_keyword: (e.g. 'Osu', 'Airport', 'Cantonments')
-    - min_price: (number or null)
-    - max_price: (number or null)
-    - keywords: (list of strings like 'pool', 'security', 'shop')
-    Return JSON ONLY.
+    You are a SQL Filter Generator. Query: "{user_query}"
+    Extract: location_keyword, min_price, max_price, keywords (list). JSON ONLY.
     """
-    
     try:
         response = client.models.generate_content(
-            model="gemini-2.0-flash",
-            contents=prompt,
-            config=types.GenerateContentConfig(response_mime_type="application/json")
+            model="gemini-2.0-flash", contents=prompt, config=types.GenerateContentConfig(response_mime_type="application/json")
         )
         filters = json.loads(clean_json_text(response.text))
-        
         query = supabase.table("v_property_details").select("*")
-        
-        if filters.get('location_keyword'):
-            query = query.ilike("location", f"%{filters['location_keyword']}%")
-        if filters.get('max_price'):
-            query = query.lte("price", filters['max_price'])
-        if filters.get('min_price'):
-            query = query.gte("price", filters['min_price'])
-            
+        if filters.get('location_keyword'): query = query.ilike("location", f"%{filters['location_keyword']}%")
+        if filters.get('max_price'): query = query.lte("price", filters['max_price'])
+        if filters.get('min_price'): query = query.gte("price", filters['min_price'])
         results = query.limit(20).execute()
-        
-        return {
-            "interpreted_filters": filters,
-            "results": results.data,
-            "match_count": len(results.data)
-        }
+        return {"interpreted_filters": filters, "results": results.data, "match_count": len(results.data)}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"AI Search failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/utils/extract-gps", response_model=GPSResult, tags=["Utilities"])
 async def extract_gps(file: UploadFile = File(...)):
-    """
-    **World-Class Locator (EXIF + AI Vision).**
-    
-    1. Checks for hidden GPS metadata (Precision: High).
-    2. If missing, asks Gemini to look at the image (Landmarks/Signs) (Precision: Medium).
-    """
-    try:
-        # AWAIT the new async function from utils
-        lat, lon, msg = await extract_gps_from_file(file)
-        
-        if lat is not None and lon is not None:
-            return {
-                "found": True, 
-                "latitude": lat, 
-                "longitude": lon, 
-                "message": msg
-            }
-        else:
-            return {"found": False, "message": msg}
-    except Exception as e:
-        return {"found": False, "message": f"Error processing image: {str(e)}"}
+    lat, lon, msg = await extract_gps_from_file(file)
+    if lat and lon: return {"found": True, "latitude": lat, "longitude": lon, "message": msg}
+    return {"found": False, "message": msg}
 
 @app.get("/signals/latest", response_model=List[SocialSignal], tags=["Social Intel"])
 def get_social_signals(limit: int = 10):
-    response = supabase.table("social_signals")\
-        .select("*")\
-        .order("created_at", desc=True)\
-        .limit(limit)\
-        .execute()
+    response = supabase.table("social_signals").select("*").order("created_at", desc=True).limit(limit).execute()
     return response.data
