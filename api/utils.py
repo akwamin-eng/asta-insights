@@ -18,9 +18,18 @@ load_dotenv()
 
 pillow_heif.register_heif_opener()
 
+# --- CLIENT CONFIGURATION ---
+
+# 1. Gemini AI (Uses the original AI Key)
+# This keeps your "Why it scored" and "Visual Analysis" working.
 client = genai.Client(api_key=os.environ.get("GOOGLE_API_KEY"))
+
+# 2. Supabase
 supabase = create_client(os.environ.get("SUPABASE_URL"), os.environ.get("SUPABASE_SERVICE_ROLE_KEY"))
-GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
+
+# 3. Google Maps (Uses the NEW Geocoding Key)
+# This powers the "Omni-Parser" and Location resolving.
+GOOGLE_MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY")
 
 # --- REGEX PATTERNS ---
 GHANA_POST_REGEX = r"([A-Z]{2}-?\d{3,4}-?\d{3,4})"
@@ -122,24 +131,18 @@ def query_ghana_post_direct(address: str) -> Tuple[Optional[float], Optional[flo
 
 def geocode_with_google(address_text: str) -> Tuple[Optional[float], Optional[float], str]:
     """
-    Enhanced Geocoder:
-    1. Handles "Ghana, Ghana" duplication.
-    2. Returns specific error messages.
+    Enhanced Geocoder using the DEDICATED Maps Key.
     """
-    if not GOOGLE_API_KEY: 
-        return None, None, "Missing Google API Key on Server"
+    if not GOOGLE_MAPS_API_KEY: 
+        return None, None, "Missing GOOGLE_MAPS_API_KEY on Server"
 
-    # Smart Context: Only append Ghana if not present
     query_address = address_text
     if "ghana" not in address_text.lower():
         query_address = f"{address_text}, Ghana"
     
     try:
         url = "https://maps.googleapis.com/maps/api/geocode/json"
-        params = {"address": query_address, "key": GOOGLE_API_KEY}
-        
-        # Log query for debugging (visible in Render logs)
-        print(f"🗺️ Google Geocoding Query: {query_address}")
+        params = {"address": query_address, "key": GOOGLE_MAPS_API_KEY}
         
         resp = requests.get(url, params=params, timeout=5)
         data = resp.json()
@@ -148,7 +151,6 @@ def geocode_with_google(address_text: str) -> Tuple[Optional[float], Optional[fl
             location = data['results'][0]['geometry']['location']
             lat, lon = location['lat'], location['lng']
             
-            # Cache High-Confidence results (Rooftop/Geometric Center)
             loc_type = data['results'][0].get('geometry', {}).get('location_type')
             if loc_type in ['ROOFTOP', 'GEOMETRIC_CENTER']:
                  cache_address(normalize_ghana_post(address_text), lat, lon, 'google')
@@ -161,13 +163,10 @@ def geocode_with_google(address_text: str) -> Tuple[Optional[float], Optional[fl
         return None, None, f"Google Connection Error: {str(e)}"
 
 def resolve_text_location(text_input: str) -> Tuple[Optional[float], Optional[float], str]:
-    """
-    Omni-Parser with 'Catch-All' and Bubble-Up Errors.
-    """
     if not text_input: return None, None, ""
     
     clean_text = text_input.strip().upper()
-    debug_log = [] # Collect errors for final report if all fail
+    debug_log = []
 
     # 1. ATTEMPT: Raw Coordinates
     coord_match = re.search(LAT_LON_REGEX, text_input)
