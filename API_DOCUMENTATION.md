@@ -52,3 +52,23 @@ map.addLayer({
     ]
   }
 });
+
+### 7. AI-Powered GPS Extraction (World Class)
+**Endpoint:** `POST /utils/extract-gps`
+
+**Use Case:** "Auto-fill Location" for Agent Uploads.
+This is a **Dual-Engine** system:
+1.  **Engine A (EXIF):** Checks for precise GPS coordinates hidden in the file metadata.
+2.  **Engine B (Gemini Vision):** If metadata is missing, it sends the image to Gemini to recognize landmarks, street signs, and architecture to estimate the location.
+
+**Payload:** `multipart/form-data` with `file` (image).
+
+**Response (Success - EXIF):**
+```json
+{
+  "found": true,
+  "latitude": 5.603,
+  "longitude": -0.187,
+  "message": "Extracted from EXIF Metadata (High Precision)"
+}
+eof

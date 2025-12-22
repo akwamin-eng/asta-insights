@@ -30,11 +30,11 @@ app = FastAPI(
     * **Unified Property Data**: Normalized listings with AI-enriched ROI scores.
     * **GeoJSON Heatmaps**: Optimized for Mapbox/Google Maps integration.
     * **Semantic Search**: "ChatGPT-style" search that translates natural language to SQL.
-    * **GPS Extraction**: Auto-locates properties via EXIF image data.
+    * **World-Class GPS**: Extracts location from EXIF *or* uses AI Vision to recognize landmarks.
     * **Spatial Search**: High-speed "Near Me" queries using PostGIS.
     * **Social Signals**: Real-time sentiment analysis from Reddit/TikTok.
     """,
-    version="2.6.0",
+    version="2.7.0",
     docs_url="/docs",
     redoc_url="/redoc"
 )
@@ -48,54 +48,54 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- PYDANTIC MODELS (The Documentation Layer) ---
+# --- PYDANTIC MODELS ---
 
 class PropertyUnified(BaseModel):
-    id: str = Field(..., description="Unique UUID of the property listing.")
-    title: str = Field(..., description="The cleaned title of the listing.")
-    price: float = Field(..., description="Price in GHS (Ghana Cedis).")
-    location: str = Field(..., description="Normalized neighborhood name (e.g., 'East Legon').")
-    roi_score: float = Field(..., description="AI-Calculated ROI Potential (0.0 - 10.0). 10 is best.")
-    sentiment_score: float = Field(..., description="Market 'Vibe' Score (-1.0 to 1.0).")
-    investment_vibe: str = Field(..., description="One-line AI verdict (e.g., 'Cash Flow King').")
-    latitude: float = Field(..., description="Decimal Latitude for mapping.")
-    longitude: float = Field(..., description="Decimal Longitude for mapping.")
-    last_seen_at: str = Field(..., description="ISO 8601 Timestamp of last update.")
+    id: str
+    title: str
+    price: float
+    location: str
+    roi_score: float
+    sentiment_score: float
+    investment_vibe: str
+    latitude: float
+    longitude: float
+    last_seen_at: str
 
 class GeoJSONFeature(BaseModel):
     type: str = "Feature"
-    geometry: Dict[str, Any] = Field(..., description="Point geometry [lon, lat]")
-    properties: Dict[str, Any] = Field(..., description="Minimal data for map interactions (id, price, roi).")
+    geometry: Dict[str, Any]
+    properties: Dict[str, Any]
 
 class GeoJSONCollection(BaseModel):
     type: str = "FeatureCollection"
     features: List[GeoJSONFeature]
 
 class SearchQuery(BaseModel):
-    query: str = Field(..., example="3 bedroom house in Osu under 500k", description="Natural language search string.")
+    query: str = Field(..., example="3 bedroom house in Osu under 500k")
 
 class SearchResponse(BaseModel):
-    interpreted_filters: Dict[str, Any] = Field(..., description="How the AI understood your query.")
-    results: List[Dict[str, Any]] = Field(..., description="Matching database rows.")
+    interpreted_filters: Dict[str, Any]
+    results: List[Dict[str, Any]]
     match_count: int
 
 class GPSResult(BaseModel):
-    found: bool = Field(..., description="True if EXIF GPS data was successfully extracted.")
+    found: bool
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     message: str
 
 class SocialSignal(BaseModel):
-    platform: str = Field(..., example="reddit")
-    content: str = Field(..., description="The raw post text.")
-    detected_location: Optional[str] = Field(None, description="City/Area extracted by AI.")
-    summary: str = Field(..., description="One-sentence AI summary of the complaint/insight.")
+    platform: str
+    content: str
+    detected_location: Optional[str]
+    summary: str
     created_at: str
 
 class NearbyQuery(BaseModel):
-    latitude: float = Field(..., example=5.6037, description="User's current latitude.")
-    longitude: float = Field(..., example=-0.1870, description="User's current longitude.")
-    radius_km: float = Field(2.0, example=5.0, description="Search radius in Kilometers.")
+    latitude: float = Field(..., example=5.6037)
+    longitude: float = Field(..., example=-0.1870)
+    radius_km: float = Field(2.0, example=5.0)
 
 # --- HELPER FUNCTIONS ---
 def clean_json_text(text):
@@ -110,33 +110,19 @@ def clean_json_text(text):
 def read_root():
     return {
         "status": "online", 
-        "system": "Asta API v2.6", 
+        "system": "Asta API v2.7", 
         "docs": "/docs", 
         "message": "Welcome. Visit /docs for interactive testing."
     }
 
 @app.get("/properties/unified", response_model=List[PropertyUnified], tags=["Core Data"])
 def get_unified_properties(limit: int = 50):
-    """
-    **Primary Endpoint for Lists & Tables.**
-    
-    Returns clean, normalized data backed by the `v_property_details` SQL View.
-    Use this to populate the main dashboard grid.
-    """
     response = supabase.table("v_property_details").select("*").limit(limit).execute()
     return response.data
 
 @app.get("/properties/geojson", response_model=GeoJSONCollection, tags=["Maps"])
 def get_property_heatmap():
-    """
-    **Optimized for Mapbox GL JS / Google Maps.**
-    
-    Returns a valid GeoJSON `FeatureCollection`.
-    * **Frontend Usage:** Pass this URL directly to `map.addSource(..., { type: 'geojson', data: URL })`.
-    * **Styling:** Use `properties.roi_score` to color-code markers (Red=Low, Green=High).
-    """
     response = supabase.table("v_property_details").select("*").limit(500).execute()
-    
     features = []
     for item in response.data:
         feat = {
@@ -158,17 +144,8 @@ def get_property_heatmap():
 
 @app.post("/properties/nearby", tags=["Maps"])
 def find_nearby_properties(query: NearbyQuery):
-    """
-    **Geo-Spatial Radius Search (PostGIS).**
-    
-    Uses high-speed spatial indexing to find properties within `radius_km` of the user.
-    Returns results sorted by distance (closest first).
-    """
     try:
-        # Convert KM to Meters for PostGIS
         radius_meters = query.radius_km * 1000
-        
-        # Call the SQL Function (RPC)
         response = supabase.rpc("search_nearby_properties", {
             "user_lat": query.latitude, 
             "user_lon": query.longitude, 
@@ -186,13 +163,6 @@ def find_nearby_properties(query: NearbyQuery):
 
 @app.post("/search/ai", response_model=SearchResponse, tags=["AI Features"])
 def ai_semantic_search(search: SearchQuery):
-    """
-    **The 'ChatGPT' Search Bar.**
-    
-    1. Receives natural text (e.g. *"Safe 3 bedroom near airport"*).
-    2. Asks Gemini to translate that intent into SQL filters.
-    3. Executes the query and returns matches.
-    """
     user_query = search.query
     print(f"🧠 AI Search processing: '{user_query}'")
     
@@ -217,7 +187,6 @@ def ai_semantic_search(search: SearchQuery):
         
         query = supabase.table("v_property_details").select("*")
         
-        # Apply Filters Dynamically
         if filters.get('location_keyword'):
             query = query.ilike("location", f"%{filters['location_keyword']}%")
         if filters.get('max_price'):
@@ -238,33 +207,29 @@ def ai_semantic_search(search: SearchQuery):
 @app.post("/utils/extract-gps", response_model=GPSResult, tags=["Utilities"])
 async def extract_gps(file: UploadFile = File(...)):
     """
-    **For Agent Upload Forms.**
+    **World-Class Locator (EXIF + AI Vision).**
     
-    Uploads a photo -> Returns `{ found: true, latitude: ..., longitude: ... }`.
-    Use this to auto-fill the "Location" field when an agent uploads a property photo.
+    1. Checks for hidden GPS metadata (Precision: High).
+    2. If missing, asks Gemini to look at the image (Landmarks/Signs) (Precision: Medium).
     """
     try:
-        lat, lon = extract_gps_from_file(file.file)
+        # AWAIT the new async function from utils
+        lat, lon, msg = await extract_gps_from_file(file)
+        
         if lat is not None and lon is not None:
             return {
                 "found": True, 
                 "latitude": lat, 
                 "longitude": lon, 
-                "message": "GPS coordinates extracted successfully."
+                "message": msg
             }
         else:
-            return {"found": False, "message": "No GPS metadata found in this image."}
+            return {"found": False, "message": msg}
     except Exception as e:
         return {"found": False, "message": f"Error processing image: {str(e)}"}
 
 @app.get("/signals/latest", response_model=List[SocialSignal], tags=["Social Intel"])
 def get_social_signals(limit: int = 10):
-    """
-    **Real-Time Street Sentiment.**
-    
-    Returns the latest Reddit/TikTok chatter flagged with location intelligence.
-    Use this for the "Trending Alerts" ticker.
-    """
     response = supabase.table("social_signals")\
         .select("*")\
         .order("created_at", desc=True)\
