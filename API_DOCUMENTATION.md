@@ -90,3 +90,33 @@ Append these parameters to any Supabase Storage URL:
 The database tables are now protected by **Row Level Security**.
 * **Public Access:** `SELECT` (Read) only.
 * **Write Access:** Restricted to Backend Services (Service Role Key).
+
+---
+
+## 🚨 CRITICAL: Frontend Performance Standards (Must Read)
+
+**Target Market Context:** Mobile data in Ghana is expensive, and latency varies. Asta must be "Data-First."
+**Requirement:** **NEVER** render raw image URLs returned by the API.
+
+### ⚡️ Image Optimization Strategy (Supabase Transformations)
+The API returns raw high-res references (e.g., `.../house1.jpg`). You must transform these on the client side before rendering.
+
+| View Type | Required Query Parameters | Target Size |
+| :--- | :--- | :--- |
+| **List/Grid Cards** | `?width=400&resize=cover&quality=60` | ~30KB |
+| **Detail Hero Image** | `?width=800&resize=contain&quality=75` | ~120KB |
+| **Map Markers** | `?width=64&height=64&resize=cover&quality=50` | ~5KB |
+
+### ❌ WRONG (Do not do this)
+```jsx
+// 🔴 This loads a 5MB file and will burn user data quotas
+<img src={property.image_url} />
+✅ RIGHT (Do this)
+JavaScript
+
+// 🟢 This loads a 40KB file optimized for 4G networks
+const optimize = (url, width) => `${url}?width=${width}&resize=cover&quality=60`;
+
+<img src={optimize(property.image_url, 400)} alt={property.title} />
+Why? Failing to implement this will result in 10s+ load times on 4G networks and immediate user churn.
+
