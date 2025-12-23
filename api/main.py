@@ -10,7 +10,7 @@ from api.utils import extract_gps_from_file, reverse_geocode, generate_property_
 app = FastAPI(
     title="Asta Insights API",
     description="AI-Powered Real Estate Intelligence for Ghana",
-    version="3.5"
+    version="3.6"
 )
 
 app.add_middleware(
@@ -63,7 +63,7 @@ async def upload_image_to_supabase(file_bytes: bytes, path: str, content_type: s
 
 @app.get("/", tags=["Health"])
 def read_root():
-    return {"status": "active", "system": "Asta Insights API v3.5 (Omni-Parser + DataSaver)", "docs_url": "/docs"}
+    return {"status": "active", "system": "Asta Insights API v3.6 (Rent/Sale Support)", "docs_url": "/docs"}
 
 @app.post("/utils/extract-gps", tags=["Utilities"])
 async def extract_gps(
@@ -81,21 +81,27 @@ async def extract_gps(
 @app.post("/listings/create", tags=["Lazy Agent"])
 async def create_lazy_listing(
     price: float = Form(...),
+    listing_type: str = Form("SALE"), # Default to SALE if missing
     currency: str = Form("GHS"),
     description: Optional[str] = Form(None),
     location_hint: Optional[str] = Form(None),
     files: List[UploadFile] = File(...)
 ):
     """
-    **The Lazy Publisher (Now with Compression & Insights).**
-    1. Extracts GPS.
+    **The Lazy Publisher.**
+    1. Extracts GPS (Omni-Parser).
     2. Auto-Names Location.
-    3. **Compresses Images** (Data Saver).
-    4. **Generates Trust Bullets** (AI Analysis).
+    3. Compresses Images (Data Saver).
+    4. **Generates Context-Aware Insights (Rent vs Sale).**
     5. Saves to DB.
     """
     if not files:
         raise HTTPException(status_code=400, detail="No images provided.")
+
+    # Validate Listing Type
+    clean_type = listing_type.upper().strip()
+    if clean_type not in ["SALE", "RENT"]:
+        clean_type = "SALE"
 
     # 1. READ FIRST IMAGE FOR GPS & AI
     first_image_bytes = await files[0].read()
@@ -111,9 +117,9 @@ async def create_lazy_listing(
     else:
         location_name = reverse_geocode(lat, lon)
 
-    # 3. AI TRUST ANALYSIS (The "Black Box" Fix) 🧠
+    # 3. AI TRUST ANALYSIS (Context Aware) 🧠
     # Use the raw bytes of first image for analysis
-    insights = generate_property_insights(first_image_bytes, price, location_name)
+    insights = generate_property_insights(first_image_bytes, price, location_name, clean_type)
     
     # 4. COMPRESSION & UPLOAD LOOP 📸
     image_urls = []
@@ -132,21 +138,25 @@ async def create_lazy_listing(
         if url: image_urls.append(url)
 
     # 5. DB INSERT
-    # Maps AI insights to the table. 
-    # NOTE: Ensure your DB has 'roi_score' (numeric) and 'trust_bullets' (text[] or jsonb).
-    # If not, these extra fields will be ignored or cause error depending on strictness.
+    # Logic: Auto-generate title based on Rent/Sale context
+    auto_title = f"{insights.get('vibe', 'New')} Property for {clean_type.title()} in {location_name}"
+    
     new_property = {
         "id": property_id,
-        "title": description[:50] + "..." if description else f"{insights.get('vibe', 'New')} Property in {location_name}",
+        "title": description[:50] + "..." if description else auto_title,
         "description": description or f"AI Summary: {insights.get('vibe')}. {'; '.join(insights.get('trust_bullets', []))}",
         "price": price,
         "currency": currency,
+        "listing_type": clean_type,
         "location": location_name,
         "latitude": lat,
         "longitude": lon,
         "image_urls": image_urls,
         "agent_id": "anon_agent",
-        "created_at": "now()"
+        "created_at": "now()",
+        "roi_score": insights.get("score", 0),
+        "trust_bullets": insights.get("trust_bullets", []),
+        "vibe": insights.get("vibe", "Standard")
     }
     
     try:
@@ -154,6 +164,7 @@ async def create_lazy_listing(
         return {
             "status": "success",
             "location": location_name,
+            "type": clean_type,
             "coordinates": {"lat": lat, "lon": lon},
             "insights": insights,
             "images_uploaded": len(image_urls)

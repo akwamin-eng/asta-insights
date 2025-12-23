@@ -22,14 +22,12 @@ pillow_heif.register_heif_opener()
 # --- CLIENT CONFIGURATION ---
 
 # 1. Gemini AI (Uses the original AI Key)
-# This keeps your "Visual Analysis" working.
 client = genai.Client(api_key=os.environ.get("GOOGLE_API_KEY"))
 
 # 2. Supabase (For Caching & Storage)
 supabase = create_client(os.environ.get("SUPABASE_URL"), os.environ.get("SUPABASE_SERVICE_ROLE_KEY"))
 
 # 3. Google Maps (Uses the NEW Geocoding Key)
-# This powers the "Omni-Parser" and Location resolving.
 GOOGLE_MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY")
 
 # --- REGEX PATTERNS ---
@@ -219,16 +217,19 @@ def resolve_text_location(text_input: str) -> Tuple[Optional[float], Optional[fl
 
 # --- AI INSIGHTS GENERATOR (TRUST BULLETS) 🧠 ---
 
-def generate_property_insights(image_bytes: bytes, price: float, location: str) -> Dict[str, Any]:
+def generate_property_insights(image_bytes: bytes, price: float, location: str, listing_type: str = "SALE") -> Dict[str, Any]:
     """
     Generates the 'Black Box' explanation: Score + Trust Bullets.
+    Context aware: Knows difference between Rent vs Sale pricing.
     """
     prompt = f"""
-    Analyze this real estate image. The property is in {location} and listed for {price}.
+    Analyze this real estate image. The property is in {location}.
+    It is listed for {listing_type} at {price}.
+    
     Return a strict JSON object with:
-    1. "score": A rating from 1-10 based on visual appeal and standard Ghanaian market standards.
-    2. "trust_bullets": A list of 3 short, specific pros/cons (e.g. "✅ Modern tiling", "⚠️ Low natural light").
-    3. "vibe": One word description (e.g. "Cosy", "Luxury", "Fixer-Upper").
+    1. "score": A rating from 1-10. Consider if {price} is reasonable for a {listing_type} in this area.
+    2. "trust_bullets": A list of 3 short, specific pros/cons (e.g. "✅ Good Rental Yield", "⚠️ Overpriced for area").
+    3. "vibe": One word description (e.g. "Cosy", "Luxury", "Student-Housing").
     """
     try:
         response = client.models.generate_content(
