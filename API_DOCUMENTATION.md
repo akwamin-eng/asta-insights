@@ -230,3 +230,35 @@ The system now maintains a persistent `location_cache` table in Supabase.
 curl -X POST ... \
   -F "file=@photo.jpg" \
   -F "text_hint=5.560, -0.205"
+
+---
+
+## 🏠 11. Lazy Listing Publisher
+
+**Endpoint:** `POST /listings/create`
+
+The ultimate "One-Shot" endpoint. It takes raw inputs (images + minimal text) and performs the entire listing lifecycle automatically.
+
+### ⚡️ What it automates:
+1.  **GPS Extraction:** Scans EXIF data. If missing, parses the `location_hint` (Omni-Parser).
+2.  **Reverse Geocoding:** Converts GPS coordinates into a human-readable neighborhood name (e.g., "East Legon").
+3.  **Image Hosting:** Uploads all files to Supabase Storage (`/properties` bucket).
+4.  **Database Record:** Creates the property entry with all derived data.
+
+### 📥 Parameters (`multipart/form-data`)
+
+| Field | Type | Required | Description |
+| :--- | :--- | :--- | :--- |
+| `files` | `File[]` | **Yes** | One or more images (JPEG/HEIC). First image used for GPS. |
+| `price` | `Float` | **Yes** | Numeric price value. |
+| `currency` | `String` | No | Default: `GHS`. |
+| `location_hint` | `String` | No | Any location format (Ghana Post, Plus Code, Lat/Lon) if EXIF is missing. |
+| `description` | `String` | No | Optional description. If empty, title is auto-generated. |
+
+### 📝 Example Usage
+```bash
+curl -X POST [https://api.asta/listings/create](https://api.asta/listings/create) \
+  -F "files=@living_room.jpg" \
+  -F "files=@kitchen.jpg" \
+  -F "price=250000" \
+  -F "location_hint=GA-182-6363"
