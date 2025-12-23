@@ -20,7 +20,7 @@ def send_wa_reply(to_number, message):
         try:
             twilio_client.messages.create(body=message, from_=TWILIO_FROM, to=to_number)
         except Exception as e:
-            print(f"Twilio Send Error: {e}")
+            print(f"Twilio Error: {e}")
 
 @router.post("/webhook")
 async def whatsapp_webhook(
@@ -29,15 +29,16 @@ async def whatsapp_webhook(
     NumMedia: int = Form(0),
     request: Request = Request
 ):
+    # 1. Immediate Acknowledge
     if NumMedia > 0:
-        send_wa_reply(From, "⏳ Asta is crafting your professional listing. One moment...")
+        send_wa_reply(From, "🛋️ Asta is analyzing your property details and crafting a professional listing...")
 
     form_data = await request.form()
     property_id = str(uuid.uuid4())
     image_urls = []
     first_image_data = None
 
-    # 1. Process Media
+    # 2. Process Media & Fix Rendering
     for i in range(NumMedia):
         url = form_data.get(f'MediaUrl{i}')
         if url:
@@ -45,72 +46,74 @@ async def whatsapp_webhook(
                 file_bytes = download_media(url)
                 if not first_image_data: first_image_data = file_bytes
                 path = f"{property_id}/whatsapp_{i}.jpg"
-                saved_url = await upload_image_to_supabase(file_bytes, path)
-                if saved_url: image_urls.append(saved_url)
-            except: continue
+                
+                # UPLOAD & GET PUBLIC URL
+                supabase.storage.from_("properties").upload(path, file_bytes, {"content-type": "image/jpeg"})
+                public_url = supabase.storage.from_("properties").get_public_url(path)
+                image_urls.append(public_url)
+            except Exception as e:
+                print(f"Media fail: {e}")
 
     if not image_urls: return "OK"
 
-    # 2. Extract Basic Stats from Text
-    price = 0
-    if Body:
-        nums = re.findall(r'\d+', Body.replace(',', ''))
-        if nums: price = float(max([int(n) for n in nums]))
-
-    # 3. AI COPYWRITING ENGINE (The "Top Tier" Upgrade)
-    # We send the image + user text to Gemini for professional branding
+    # 3. AI Intelligence Overhaul (Sale vs Rent + Location + Copywriting)
     prompt = f"""
-    Act as a Senior Real Estate Copywriter. Create a premium listing for Ghana's top aggregator.
+    Act as a Luxury Real Estate Agent. Analyze the provided image and text: "{Body}"
     
-    User Input: "{Body}"
-    
-    Task:
-    1. Title: Create a unique, benefit-driven title (e.g. 'Contemporary 4-Bedroom Masterpiece').
-    2. Description: Write a 3-paragraph professional description. Focus on lifestyle, security, and investment value.
-    3. ROI Score: Assign a score (1-10) based on the image quality and description.
-    4. Vibe: One word (Luxury, Coastal, Modern, etc.)
-    
-    Return ONLY a JSON object:
-    {{"title": "...", "description": "...", "roi_score": 8.5, "vibe": "..."}}
+    TASKS:
+    1. Extract Price (number only).
+    2. Determine Listing Type: 'SALE' or 'RENT'.
+    3. Extract Location: Be specific (e.g. 'Prampram', 'East Legon'). 
+    4. Create a High-End Title: Use evocative language.
+    5. Professional Description: 3 paragraphs in the style of Knight Frank or Sotheby's.
+    6. ROI/Trust: Generate 3 'trust_bullets' based on what you see in the photo.
+
+    Return ONLY valid JSON:
+    {{
+        "title": "string",
+        "description": "string",
+        "price": number,
+        "listing_type": "SALE" | "RENT",
+        "location": "string",
+        "vibe": "string",
+        "roi_score": number,
+        "trust_bullets": ["string"]
+    }}
     """
     
     try:
-        # Use Gemini Vision to 'see' the property and write about it
         model = client.GenerativeModel('gemini-1.5-flash')
-        # Simplified for direct bytes usage
         response = model.generate_content([prompt, {"mime_type": "image/jpeg", "data": first_image_data}])
-        # Extract JSON from response
-        res_text = response.text.replace('```json', '').replace('```', '').strip()
-        ai_data = json.loads(res_text)
+        ai_data = json.loads(response.text.replace('```json', '').replace('```', '').strip())
     except Exception as e:
-        print(f"AI Copywriting Error: {e}")
-        ai_data = {
-            "title": f"New Listing in {Body[:20] if Body else 'Accra'}", 
-            "description": Body or "Beautiful property with modern finishes.",
-            "roi_score": 7.0,
-            "vibe": "Modern"
-        }
+        print(f"AI Error: {e}")
+        ai_data = {"title": "Modern Property", "description": Body, "price": 0, "listing_type": "SALE", "location": "Accra", "vibe": "Modern", "roi_score": 5, "trust_bullets": []}
 
-    # 4. Save to Database
+    # 4. Save to Database (Including the missing fields)
     new_prop = {
         "id": property_id,
-        "title": ai_data.get("title"),
-        "description": ai_data.get("description"),
-        "price": price,
-        "currency": "USD" if "$" in (Body or "") else "GHS",
-        "image_urls": image_urls,
+        "title": ai_data["title"],
+        "description": ai_data["description"],
+        "price": ai_data["price"] if ai_data["price"] > 0 else 0,
+        "currency": "GHS" if "ghs" in (Body or "").lower() else "USD",
+        "location": ai_data["location"],
+        "latitude": 5.7067, # Prampram Default if needed
+        "longitude": 0.1089,
+        "image_urls": image_urls, # Fixed rendering array
         "agent_id": From,
-        "roi_score": ai_data.get("roi_score"),
-        "vibe": ai_data.get("vibe"),
+        "roi_score": ai_data["roi_score"],
+        "trust_bullets": ai_data["trust_bullets"],
+        "vibe": ai_data["vibe"],
+        "listing_type": ai_data["listing_type"],
         "created_at": "now()"
     }
 
     try:
         supabase.table("properties").insert(new_prop).execute()
         
-        web_url = f"https://asta-insights.vercel.app/listing/{property_id}"
-        success_msg = f"🚀 LIVE: *{ai_data.get('title')}*\n\nYour professional listing has been generated and is now live on Asta.\n\n🔗 View Listing: {web_url}\n\nIs there a preferred WhatsApp number for buyer enquiries?"
-        send_wa_reply(From, success_msg)
+        # 5. Professional Confirmation Reply
+        msg = f"✅ *Listing Live: {ai_data['title']}*\n\n📍 Location: {ai_data['location']}\n💰 Price: {new_prop['currency']} {ai_data['price']}\n📋 Type: {ai_data['listing_type']}\n\nYour property is now being analyzed by our Diaspora investor network. Please confirm the best number for enquiries."
+        send_wa_reply(From, msg)
     except Exception as e:
         print(f"DB Error: {e}")
 
