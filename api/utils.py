@@ -270,3 +270,35 @@ async def extract_gps_from_file(file_obj, text_hint: str = None) -> Tuple[Option
     
     final_msg = f"Location Failed. {err_msg}" if err_msg else "Location detection failed."
     return None, None, final_msg
+
+# --- SHARED UTILS ADDED FOR PHASE 2 REFACTOR ---
+import io
+from PIL import Image
+
+def compress_image(file_bytes: bytes) -> bytes:
+    """Resizes image to max 1080p width and compresses to JPEG Quality 70."""
+    try:
+        img = Image.open(io.BytesIO(file_bytes))
+        if img.mode in ("RGBA", "P"): img = img.convert("RGB")
+        
+        base_width = 1080
+        if img.size[0] > base_width:
+            w_percent = (base_width / float(img.size[0]))
+            h_size = int((float(img.size[1]) * float(w_percent)))
+            img = img.resize((base_width, h_size), Image.Resampling.LANCZOS)
+            
+        output = io.BytesIO()
+        img.save(output, format="JPEG", quality=70, optimize=True)
+        return output.getvalue()
+    except Exception as e:
+        print(f"Compression failed: {e}")
+        return file_bytes
+
+async def upload_image_to_supabase(file_bytes: bytes, path: str, content_type: str = "image/jpeg") -> str:
+    bucket_name = "properties"
+    try:
+        supabase.storage.from_(bucket_name).upload(path, file_bytes, {"content-type": content_type})
+        return supabase.storage.from_(bucket_name).get_public_url(path)
+    except Exception as e:
+        print(f"Supabase Upload Error: {e}")
+        return ""
