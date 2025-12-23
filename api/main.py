@@ -347,3 +347,118 @@ async def extract_gps(
 def get_social_signals(limit: int = 10):
     response = supabase.table("social_signals").select("*").order("created_at", desc=True).limit(limit).execute()
     return response.data
+
+# --- LAZY LISTING UTILS ---
+
+async def upload_image_to_supabase(file: UploadFile, path: str) -> str:
+    """Uploads a file to Supabase Storage and returns the Public URL."""
+    file_bytes = await file.read()
+    bucket_name = "properties" # Ensure this bucket exists in Supabase
+    
+    # Upload
+    supabase.storage.from_(bucket_name).upload(
+        path,
+        file_bytes,
+        {"content-type": file.content_type}
+    )
+    
+    # Get Public URL
+    public_url = supabase.storage.from_(bucket_name).get_public_url(path)
+    return public_url
+
+# --- LAZY LISTING ENDPOINT ---
+
+@app.post("/listings/create", tags=["Lazy Agent"])
+async def create_lazy_listing(
+    price: float = Form(...),
+    currency: str = Form("GHS"),
+    description: Optional[str] = Form(None),
+    location_hint: Optional[str] = Form(None),
+    files: List[UploadFile] = File(...)
+):
+    """
+    **The 'Lazy Agent' Publisher.**
+    1. Extracts GPS from the first image or text hint.
+    2. Auto-detects Neighborhood name (Reverse Geocoding).
+    3. Uploads all images to Supabase.
+    4. Creates the property record.
+    """
+    if not files:
+        raise HTTPException(status_code=400, detail="No images provided.")
+
+    # 1. LOCATION INTELLIGENCE 📍
+    # We use the first image + hint to resolve location
+    lat, lon, loc_msg = await extract_gps_from_file(files[0], location_hint)
+    
+    # Reset file cursor after reading for GPS
+    await files[0].seek(0)
+    
+    if not lat or not lon:
+        # Fallback: If we can't find location, default to Accra Center (or handle error)
+        # For MVP, we accept it but mark it 'Unverified'
+        lat, lon = 5.6037, -0.1870 # Default Osu
+        location_name = "Unverified Location"
+    else:
+        # Auto-Name the location (e.g. "East Legon")
+        from api.utils import reverse_geocode
+        location_name = reverse_geocode(lat, lon)
+
+    # 2. IMAGE UPLOAD PARALLELIZATION 📸
+    image_urls = []
+    import uuid
+    import time
+    
+    # Generate a unique batch ID for this property
+    property_id = str(uuid.uuid4())
+    
+    for idx, file in enumerate(files):
+        # Create unique filename: prop_id/img_0.jpg
+        ext = file.filename.split('.')[-1]
+        file_path = f"{property_id}/img_{idx}.{ext}"
+        
+        try:
+            url = await upload_image_to_supabase(file, file_path)
+            image_urls.append(url)
+        except Exception as e:
+            print(f"Upload failed for {file.filename}: {e}")
+
+    # 3. SMART TITLE GENERATION 🧠
+    # If no description, auto-generate title
+    title = f"{len(files)} Bedroom Property in {location_name}" # Placeholder logic
+    if description:
+        title = description[:50] + "..."
+
+    # 4. DATABASE INSERTION 💾
+    new_property = {
+        "id": property_id,
+        "title": title,
+        "description": description or "Uploaded via Lazy Agent",
+        "price": price,
+        "currency": currency,
+        "location": location_name,
+        "latitude": lat,
+        "longitude": lon,
+        "image_urls": image_urls, # Ensure your DB has this column (array or jsonb)
+        "created_at": "now()",
+        "agent_id": "anon_agent" # Replace with auth user ID later
+    }
+    
+    try:
+        # Insert into 'properties' table
+        data = supabase.table("properties").insert(new_property).execute()
+        return {
+            "status": "success",
+            "message": "Property listed successfully!",
+            "location_detected": location_name,
+            "coordinates": {"lat": lat, "lon": lon},
+            "property_id": property_id,
+            "images_count": len(image_urls)
+        }
+    except Exception as e:
+        print(f"DB Error: {e}")
+        # Even if DB fails, return what we have for debugging
+        return {
+            "status": "partial_success", 
+            "error": str(e),
+            "derived_data": new_property
+        }
