@@ -1,16 +1,18 @@
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional, List, Dict
+from pydantic import BaseModel
 import os
 import uuid
 import io
+import json
 from PIL import Image
-from api.utils import extract_gps_from_file, reverse_geocode, generate_property_insights, supabase
+from api.utils import extract_gps_from_file, reverse_geocode, generate_property_insights, supabase, client, types
 
 app = FastAPI(
     title="Asta Insights API",
     description="AI-Powered Real Estate Intelligence for Ghana",
-    version="3.7"
+    version="3.8"
 )
 
 app.add_middleware(
@@ -20,6 +22,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# --- SCHEMAS ---
+class ChatRequest(BaseModel):
+    query: str
 
 # --- IMAGE COMPRESSION UTILS (DATA SAVER) 📉 ---
 
@@ -63,7 +69,7 @@ async def upload_image_to_supabase(file_bytes: bytes, path: str, content_type: s
 
 @app.get("/", tags=["Health"])
 def read_root():
-    return {"status": "active", "system": "Asta Insights API v3.7 (Full UX Suite)", "docs_url": "/docs"}
+    return {"status": "active", "system": "Asta Insights API v3.8 (Oracle Chat Enabled)", "docs_url": "/docs"}
 
 @app.post("/utils/extract-gps", tags=["Utilities"])
 async def extract_gps(
@@ -251,3 +257,45 @@ def get_trending_tags():
             "vibes": ["Modern"],
             "chips": ["📍 East Legon", "✨ Luxury"] # Fallback
         }
+
+@app.post("/agent/chat", tags=["Demo"])
+def chat_with_data(request: ChatRequest):
+    """
+    **The Oracle Demo.**
+    Feeds the last 10 listings to Gemini so you can 'chat' with your database.
+    """
+    try:
+        # 1. Fetch Real Context from DB
+        response = supabase.table("properties")\
+            .select("title, price, currency, location, listing_type, roi_score, vibe, trust_bullets")\
+            .order("created_at", desc=True)\
+            .limit(10)\
+            .execute()
+        
+        market_data = response.data
+        
+        # 2. Construct the Prompt with Data
+        prompt = f"""
+        You are Asta, an AI Real Estate Analyst for Ghana.
+        Here is the live data from our database (last 10 listings):
+        {json.dumps(market_data, indent=2)}
+
+        User Question: "{request.query}"
+
+        Instructions:
+        - Answer based ONLY on the data provided above.
+        - If the user asks for a recommendation, pick specific properties from the list.
+        - Mention the 'ROI Score' or 'Vibe' to prove you understand the data.
+        - Be professional but conversational.
+        """
+
+        # 3. Get AI Response
+        model_response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=prompt
+        )
+        
+        return {"reply": model_response.text}
+
+    except Exception as e:
+        return {"reply": f"I'm having trouble connecting to the market data right now. ({str(e)})"}

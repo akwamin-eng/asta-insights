@@ -1,101 +1,94 @@
-import os
+import requests
+import time
+import sys
 import json
-from dotenv import load_dotenv
-from supabase import create_client, Client
-from fastembed import TextEmbedding
-from google import genai  # <--- New Import
 
-# 1. SETUP
-load_dotenv()
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+# --- CONFIGURATION ---
+# Connects to your live API backend
+API_URL = "https://asta-insights.onrender.com" 
+# Use "http://127.0.0.1:8000" if testing locally before pushing
 
-if not SUPABASE_URL or not SUPABASE_KEY or not GEMINI_API_KEY:
-    print("❌ Error: Missing API Keys.")
-    exit(1)
+def type_writer(text, speed=0.015):
+    """Effect to make text look like it's being generated live"""
+    for char in text:
+        sys.stdout.write(char)
+        sys.stdout.flush()
+        time.sleep(speed)
+    print("\n")
 
-# Initialize Supabase
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+def print_header():
+    # Clear screen (works on Mac/Linux/Windows usually)
+    print("\033c", end="")
+    print("\033[96m" + "="*60)
+    print("   🧠 ASTA INTELLIGENCE HUB (DEMO MODE)")
+    print(f"   📡 Connecting to: {API_URL}")
+    print("="*60 + "\033[0m")
+    print("Type 'exit' to quit.\n")
 
-# Initialize Gemini (New Client)
-client = genai.Client(api_key=GEMINI_API_KEY)
-
-print("🧠 Loading Vector Model (all-MiniLM-L6-v2)...")
-embed_model = TextEmbedding(model_name="sentence-transformers/all-MiniLM-L6-v2")
-
-def search_database(query_text):
-    print(f"🔍 Searching database for: '{query_text}'...")
-    try:
-        # Generate vector
-        query_vector = list(embed_model.embed([query_text]))[0].tolist()
-        
-        # Search Supabase
-        response = supabase.rpc("search_market_listings", {
-            "query_embedding": query_vector,
-            "match_threshold": 0.50,
-            "match_count": 8
-        }).execute()
-        
-        return response.data
-    except Exception as e:
-        print(f"⚠️ Database Error: {e}")
-        return []
-
-def ask_asta(user_question):
-    listings = search_database(user_question)
+def main():
+    print_header()
     
-    if not listings:
-        print("🤖 Asta: I couldn't find any properties matching that description.")
+    # 1. Health Check (Ping the API)
+    try:
+        print("\033[90m[System] Handshaking with Neural Core...\033[0m")
+        start = time.time()
+        requests.get(API_URL) # Wake up the server if sleeping
+        ping = (time.time() - start) * 1000
+        print(f"\033[92m[System] Online ({int(ping)}ms). Asta is listening.\033[0m\n")
+    except Exception as e:
+        print(f"\033[91m[Error] Could not reach API. Is it deployed? ({str(e)})\033[0m")
         return
 
-    # Prepare Context
-    context_text = "Here are the most relevant properties found:\n"
-    for item in listings:
-        # Safe access to fields
-        title = item.get('title', 'Unknown Property')
-        loc = item.get('location', 'Unknown Location')
-        price = item.get('price', 0)
-        curr = item.get('currency', 'GHS') 
-        src = item.get('source', 'System')
-        
-        context_text += f"- {title} in {loc}. Price: {curr} {price}. (Source: {src})\n"
-
-    # Construct Prompt
-    prompt = f"""
-    You are Asta, a Real Estate AI for Ghana.
-    Answer the user's question using ONLY the property listings below.
-    
-    If the price is 0, say "Price on request".
-    Be concise, professional, and helpful.
-
-    CONTEXT:
-    {context_text}
-
-    USER QUESTION:
-    "{user_question}"
-    """
-
-    print("🤖 Asta is thinking...")
-    try:
-        # New Generation Syntax
-        response = client.models.generate_content(
-            model='gemini-2.0-flash',  # Trying the standard stable version for 2025
-            contents=prompt
-        )
-        print("\n" + "="*50)
-        print(response.text)
-        print("="*50 + "\n")
-    except Exception as e:
-        print(f"⚠️ AI Error: {e}")
-
-if __name__ == "__main__":
-    print("👋 Hello! I am Asta. Ask me about properties (or type 'quit').")
+    # 2. Chat Loop
     while True:
         try:
-            q = input("You: ")
-            if q.lower() in ['quit', 'exit']: break
-            if q.strip(): ask_asta(q)
+            # Get User Input
+            user_input = input("\033[1mYou:\033[0m ")
+            
+            if user_input.lower() in ['exit', 'quit']:
+                print("\033[90mDisconnecting session...\033[0m")
+                break
+            
+            if not user_input.strip():
+                continue
+            
+            # Show "Thinking" animation
+            sys.stdout.write("\033[93mAsta is analyzing live market data...\033[0m")
+            sys.stdout.flush()
+            
+            # Call the /agent/chat Endpoint
+            start_time = time.time()
+            try:
+                response = requests.post(
+                    f"{API_URL}/agent/chat", 
+                    json={"query": user_input},
+                    timeout=30
+                )
+                
+                # Clear the "Thinking..." line
+                sys.stdout.write(f"\r\033[K") 
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    reply = data.get("reply", "No response text.")
+                    
+                    # Print Header
+                    duration = time.time() - start_time
+                    print(f"\033[95mAsta ({duration:.1f}s):\033[0m")
+                    
+                    # Stream the text
+                    type_writer(reply)
+                else:
+                    print(f"\033[91m[API Error] {response.status_code}: {response.text}\033[0m")
+
+            except requests.exceptions.ConnectionError:
+                print(f"\r\033[K\033[91m[Network Error] Could not connect to Asta.\033[0m")
+                
         except KeyboardInterrupt:
-            print("\nGoodbye!")
+            print("\n\033[90mSession terminated.\033[0m")
             break
+        except Exception as e:
+            print(f"\n\033[91m[System Error] {str(e)}\033[0m")
+
+if __name__ == "__main__":
+    main()
