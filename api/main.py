@@ -1,13 +1,13 @@
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional
-from api.routers import listings, agent, seo, engagement
+from api.routers import listings, agent, seo, engagement, whatsapp # Added whatsapp
 from api.utils import extract_gps_from_file
 
 app = FastAPI(
     title="Asta Insights API",
     description="Phase 2 Modular Architecture",
-    version="4.0.1"
+    version="4.1"
 )
 
 app.add_middleware(
@@ -25,15 +25,16 @@ async def extract_gps(file: UploadFile = File(...), text_hint: Optional[str] = F
     return {"found": lat is not None, "latitude": lat, "longitude": lon, "message": msg}
 
 # --- REGISTER MODULES ---
-app.include_router(listings.router)   # Phase 1: Listings, Maps, Search, Dashboard
+app.include_router(listings.router)   # Phase 1: Listings & Maps
 app.include_router(agent.router)      # Phase 1: Chat Demo
 app.include_router(seo.router)        # Phase 2: SEO Engine
-app.include_router(engagement.router) # Phase 2: Feedback & Ticker
+app.include_router(engagement.router) # Phase 2: Feedback & Email
+app.include_router(whatsapp.router)   # Phase 2: WhatsApp Bridge 🆕
 
 @app.get("/")
 def read_root():
     return {
         "status": "active", 
-        "version": "4.0.1", 
-        "modules": ["Listings", "Agent", "SEO", "Engagement"]
+        "version": "4.1", 
+        "modules": ["Listings", "Agent", "SEO", "Engagement", "WhatsApp"]
     }
