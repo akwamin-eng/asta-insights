@@ -262,3 +262,41 @@ curl -X POST [https://api.asta/listings/create](https://api.asta/listings/create
   -F "files=@kitchen.jpg" \
   -F "price=250000" \
   -F "location_hint=GA-182-6363"
+
+---
+
+## 🔍 12. Search Experience (UX Fixes)
+
+These endpoints prevent "Dead Ends" in the user journey.
+
+### 📍 Smart Radius Search (No Empty Maps)
+**Endpoint:** `GET /listings/search`
+
+Automatically expands the search radius if no properties are found nearby.
+
+| Parameter | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `lat` | Float | Required | User's latitude |
+| `lon` | Float | Required | User's longitude |
+| `radius_km` | Int | 5 | Starting search radius |
+
+**Response:**
+```json
+{
+  "results": [...],
+  "radius_used": 15,
+  "expanded": true,
+  "message": "Found 3 properties within 15km"
+}
+🏷️ Trending Tags (No Blank Search Bar)
+Endpoint: GET /listings/tags
+
+Returns popular locations and vibes based on real database activity. Use these to render "Quick Filter" chips.
+
+Response:
+
+JSON
+
+{
+  "chips": ["📍 East Legon", "📍 Osu", "✨ Luxury", "✨ Coastal"]
+}
