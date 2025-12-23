@@ -1,76 +1,76 @@
 from fastapi import APIRouter, Form, Request
 from typing import Optional
-from api.utils import download_media, client, supabase, upload_image_to_supabase
 import uuid
+from api.utils import download_media, supabase, upload_image_to_supabase, generate_property_insights
 
 router = APIRouter(prefix="/whatsapp", tags=["Phase 2: WhatsApp Bridge"])
 
 @router.post("/webhook")
 async def whatsapp_webhook(
-    From: str = Form(...),       # The sender's phone number
-    Body: Optional[str] = Form(None), # The text (if any)
-    NumMedia: int = Form(0),     # Number of images/audio files
-    request: Request = Request   # Full raw request for safety
+    From: str = Form(...),
+    Body: Optional[str] = Form(None),
+    NumMedia: int = Form(0),
+    request: Request = Request
 ):
-    """
-    The 'Invisible Platform'. 
-    Listens for incoming WhatsApp messages (via Twilio Webhook Standard).
-    """
-    
-    # 1. Parse Media URLs (Twilio sends them as MediaUrl0, MediaUrl1...)
     form_data = await request.form()
-    media_files = []
-    
+    property_id = str(uuid.uuid4())
+    image_urls = []
+    first_image_bytes = None
+
+    # 1. Process Media
     for i in range(NumMedia):
         url = form_data.get(f'MediaUrl{i}')
-        content_type = form_data.get(f'MediaContentType{i}')
         if url:
-            media_files.append({"url": url, "type": content_type})
+            try:
+                file_bytes = download_media(url)
+                if not first_image_bytes: first_image_bytes = file_bytes
+                
+                path = f"{property_id}/whatsapp_{i}.jpg"
+                saved_url = await upload_image_to_supabase(file_bytes, path)
+                if saved_url: image_urls.append(saved_url)
+            except Exception as e:
+                print(f"Media Error at index {i}: {e}")
 
-    # 2. If no media, just a chat? (Ignore for now, we want listings)
-    if not media_files:
-        return "OK" # Return 200 so Twilio doesn't retry
+    if not image_urls:
+        return "OK"
 
-    print(f"📩 Incoming WhatsApp from {From}: {len(media_files)} files.")
+    # 2. Extract Price (Robust logic)
+    price = 0
+    if Body:
+        import re
+        numbers = re.findall(r'\d+', Body.replace(',', ''))
+        if numbers:
+            # Take the largest number as the price (likely the most accurate guess)
+            price = float(max([int(n) for n in numbers]))
 
-    # 3. Process the Files (The "Lazy" Logic)
-    # We look for 1 Audio (Description) and Images (Property)
-    
-    audio_blob = None
-    image_urls = []
-    property_id = str(uuid.uuid4())
+    # 3. AI Insights (with fallback)
+    try:
+        insights = generate_property_insights(first_image_bytes, price, "WhatsApp", "SALE")
+    except:
+        insights = {"vibe": "WhatsApp Import", "score": 5, "trust_bullets": []}
 
-    for idx, item in enumerate(media_files):
-        file_bytes = download_media(item['url'])
-        
-        # Is it Voice?
-        if "audio" in item['type']:
-            audio_blob = file_bytes
-        # Is it Image?
-        elif "image" in item['type']:
-            # Upload to Supabase Storage
-            path = f"{property_id}/whatsapp_{idx}.jpg"
-            saved_url = await upload_image_to_supabase(file_bytes, path)
-            if saved_url: image_urls.append(saved_url)
+    # 4. The Data Save
+    new_prop = {
+        "id": property_id,
+        "title": (Body[:50] + "...") if Body else "New WhatsApp Listing",
+        "description": Body or "Imported via WhatsApp.",
+        "price": price,
+        "currency": "USD" if "$" in (Body or "") else "GHS",
+        "listing_type": "SALE",
+        "location": "Cantonments" if "cantonments" in (Body or "").lower() else "Accra",
+        "latitude": 5.5612, 
+        "longitude": -0.1976,
+        "image_urls": image_urls,
+        "agent_id": From, # Format: whatsapp:+233243624887
+        "created_at": "now()",
+        "roi_score": insights.get("score", 0),
+        "vibe": insights.get("vibe", "Standard")
+    }
 
-    # 4. The AI Analysis
-    # If we have Audio, use Gemini to Transcribe + Extract Info
-    # If we have Images, use Gemini Vision
-    
-    prompt = """
-    You are Asta. Analyze these inputs to create a Real Estate Listing.
-    1. If there is audio, transcribe it and extract: Price, Location, Type.
-    2. If there are images, describe the vibe.
-    Output JSON: {title, price, location, listing_type, description}
-    """
-    
-    # (Simplified: In production we send the audio bytes to Gemini 1.5 Flash)
-    # For this demo, we assume the user typed the details if no audio, 
-    # or we just auto-tag the images.
-    
-    print(f"✅ Processing Complete. Created Property {property_id} from WhatsApp.")
-    
-    # 5. Save to DB (The "Lazy List" Insert)
-    # [Insert Logic Here - reusing the code from listings.py]
-    
-    return "Listing Created"
+    try:
+        result = supabase.table("properties").insert(new_prop).execute()
+        print(f"✅ Listing Created: {property_id}")
+    except Exception as e:
+        print(f"❌ DATABASE INSERT FAILED: {e}")
+
+    return "OK"
