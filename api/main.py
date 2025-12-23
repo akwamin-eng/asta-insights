@@ -1,6 +1,6 @@
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Any
 from pydantic import BaseModel
 import os
 import uuid
@@ -12,7 +12,7 @@ from api.utils import extract_gps_from_file, reverse_geocode, generate_property_
 app = FastAPI(
     title="Asta Insights API",
     description="AI-Powered Real Estate Intelligence for Ghana",
-    version="3.8"
+    version="3.9"
 )
 
 app.add_middleware(
@@ -69,7 +69,9 @@ async def upload_image_to_supabase(file_bytes: bytes, path: str, content_type: s
 
 @app.get("/", tags=["Health"])
 def read_root():
-    return {"status": "active", "system": "Asta Insights API v3.8 (Oracle Chat Enabled)", "docs_url": "/docs"}
+    return {"status": "active", "system": "Asta Insights API v3.9 (GeoJSON + Unified Enabled)", "docs_url": "/docs"}
+
+# --- 1. CORE UTILITIES ---
 
 @app.post("/utils/extract-gps", tags=["Utilities"])
 async def extract_gps(
@@ -84,6 +86,8 @@ async def extract_gps(
         "message": msg
     }
 
+# --- 2. THE LAZY AGENT (UPLOAD) ---
+
 @app.post("/listings/create", tags=["Lazy Agent"])
 async def create_lazy_listing(
     price: float = Form(...),
@@ -95,56 +99,41 @@ async def create_lazy_listing(
 ):
     """
     **The Lazy Publisher.**
-    1. Extracts GPS (Omni-Parser).
-    2. Auto-Names Location.
-    3. Compresses Images (Data Saver).
-    4. **Generates Context-Aware Insights (Rent vs Sale).**
-    5. Saves to DB.
+    Extracts GPS, Compresses Images, Generates AI Insights, and Saves to DB.
     """
     if not files:
         raise HTTPException(status_code=400, detail="No images provided.")
 
-    # Validate Listing Type
     clean_type = listing_type.upper().strip()
-    if clean_type not in ["SALE", "RENT"]:
-        clean_type = "SALE"
+    if clean_type not in ["SALE", "RENT"]: clean_type = "SALE"
 
-    # 1. READ FIRST IMAGE FOR GPS & AI
+    # 1. First Image Logic (GPS & AI)
     first_image_bytes = await files[0].read()
-    
-    # 2. GPS & NAMING
-    # Reset cursor first since we read bytes above
     await files[0].seek(0)
     lat, lon, loc_msg = await extract_gps_from_file(files[0], location_hint)
     
     if not lat or not lon:
-        lat, lon = 5.6037, -0.1870 # Default to Accra Center
+        lat, lon = 5.6037, -0.1870 # Accra Center Default
         location_name = "Unverified Location"
     else:
         location_name = reverse_geocode(lat, lon)
 
-    # 3. AI TRUST ANALYSIS (Context Aware) 🧠
-    # Use the raw bytes of first image for analysis
+    # 2. AI Insights
     insights = generate_property_insights(first_image_bytes, price, location_name, clean_type)
     
-    # 4. COMPRESSION & UPLOAD LOOP 📸
+    # 3. Upload & Compress Loop
     image_urls = []
     property_id = str(uuid.uuid4())
     
     for idx, file in enumerate(files):
         await file.seek(0)
         raw_bytes = await file.read()
-        
-        # COMPRESS
         compressed_bytes = compress_image(raw_bytes)
-        
-        # UPLOAD
         file_path = f"{property_id}/img_{idx}.jpg"
         url = await upload_image_to_supabase(compressed_bytes, file_path)
         if url: image_urls.append(url)
 
-    # 5. DB INSERT
-    # Logic: Auto-generate title based on Rent/Sale context
+    # 4. Save to DB
     auto_title = f"{insights.get('vibe', 'New')} Property for {clean_type.title()} in {location_name}"
     
     new_property = {
@@ -170,46 +159,81 @@ async def create_lazy_listing(
         return {
             "status": "success",
             "location": location_name,
-            "type": clean_type,
             "coordinates": {"lat": lat, "lon": lon},
-            "insights": insights,
-            "images_uploaded": len(image_urls)
+            "insights": insights
         }
     except Exception as e:
         print(f"Insert Error: {e}")
-        return {"status": "partial_success", "error": str(e), "data": new_property}
+        return {"status": "partial_success", "error": str(e)}
+
+# --- 3. DATA VISUALIZATION ENDPOINTS (RESTORED) --- 🆕
+
+@app.get("/properties/unified", tags=["Dashboard"])
+def get_unified_properties():
+    """
+    **Unified Table Endpoint.**
+    Returns clean, normalized data for the Dashboard Grid View.
+    """
+    try:
+        response = supabase.table("properties").select("*").order("created_at", desc=True).limit(100).execute()
+        return response.data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/properties/geojson", tags=["Maps"])
+def get_properties_geojson():
+    """
+    **Mapbox Source Endpoint.**
+    Returns properties as a GeoJSON FeatureCollection for easy map plotting.
+    """
+    try:
+        # Fetch properties with valid coordinates
+        response = supabase.table("properties").select("id, title, price, currency, latitude, longitude, roi_score, vibe").neq("latitude", None).execute()
+        properties = response.data
+        
+        features = []
+        for prop in properties:
+            features.append({
+                "type": "Feature",
+                "geometry": {
+                    "type": "Point",
+                    "coordinates": [float(prop["longitude"]), float(prop["latitude"])]
+                },
+                "properties": {
+                    "id": prop["id"],
+                    "title": prop["title"],
+                    "price": prop["price"],
+                    "currency": prop["currency"],
+                    "roi_score": prop["roi_score"],
+                    "vibe": prop["vibe"]
+                }
+            })
+            
+        return {
+            "type": "FeatureCollection",
+            "features": features
+        }
+    except Exception as e:
+        # Return empty valid GeoJSON on error to prevent map crash
+        return {"type": "FeatureCollection", "features": []}
+
+# --- 4. USER EXPERIENCE ---
 
 @app.get("/listings/search", tags=["User Experience"])
-def smart_radius_search(
-    lat: float, 
-    lon: float, 
-    radius_km: int = 5
-):
-    """
-    **Smart Auto-Expanding Search.**
-    Prevents 'Empty Map Syndrome' by expanding radius if 0 results found.
-    Requires Supabase RPC function 'nearby_properties'.
-    """
+def smart_radius_search(lat: float, lon: float, radius_km: int = 5):
+    """**Smart Auto-Expanding Search.**"""
     current_radius = radius_km
     max_radius = 50 
     results = []
     
-    # Loop to expand radius
     while len(results) == 0 and current_radius <= max_radius:
         try:
-            # Call PostGIS RPC
             response = supabase.rpc("nearby_properties", {
-                "lat": lat, 
-                "long": lon, 
-                "radius_km": current_radius
+                "lat": lat, "long": lon, "radius_km": current_radius
             }).execute()
             results = response.data
-            
-            if len(results) == 0:
-                current_radius += 10 # Step up
-        except Exception as e:
-            # If RPC missing, just break loop and return empty
-            break
+            if len(results) == 0: current_radius += 10
+        except: break
             
     return {
         "results": results or [],
@@ -220,82 +244,45 @@ def smart_radius_search(
 
 @app.get("/listings/tags", tags=["User Experience"])
 def get_trending_tags():
-    """
-    **Trending Chips.**
-    Fixes 'Blank Search Bar Syndrome' by aggregating real data.
-    """
+    """**Trending Chips.**"""
     try:
-        # Fetch vibes and locations from DB
         response = supabase.table("properties").select("vibe, location").execute()
         data = response.data
-        
         locations = {}
         vibes = {}
-        
         for item in data:
-            loc = item.get('location', 'Accra').split(',')[0].strip() # Get Neighborhood
+            loc = item.get('location', 'Accra').split(',')[0].strip()
             vibe = item.get('vibe', 'Standard')
-            
             if loc: locations[loc] = locations.get(loc, 0) + 1
             if vibe: vibes[vibe] = vibes.get(vibe, 0) + 1
             
-        # Sort and take top 5
         top_locs = sorted(locations, key=locations.get, reverse=True)[:5]
         top_vibes = sorted(vibes, key=vibes.get, reverse=True)[:5]
         
-        # Build Chip List
-        chips = [f"📍 {l}" for l in top_locs] + [f"✨ {v}" for v in top_vibes]
-        
         return {
-            "locations": top_locs,
-            "vibes": top_vibes,
-            "chips": chips if chips else ["📍 East Legon", "✨ Luxury", "📍 Cantonments", "✨ Modern"]
+            "locations": top_locs, 
+            "vibes": top_vibes, 
+            "chips": [f"📍 {l}" for l in top_locs] + [f"✨ {v}" for v in top_vibes]
         }
-    except Exception as e:
-        return {
-            "locations": ["East Legon"],
-            "vibes": ["Modern"],
-            "chips": ["📍 East Legon", "✨ Luxury"] # Fallback
-        }
+    except:
+        return {"chips": ["📍 East Legon", "✨ Luxury"]}
+
+# --- 5. DEMO & AI ---
 
 @app.post("/agent/chat", tags=["Demo"])
 def chat_with_data(request: ChatRequest):
-    """
-    **The Oracle Demo.**
-    Feeds the last 10 listings to Gemini so you can 'chat' with your database.
-    """
+    """**The Oracle Demo.**"""
     try:
-        # 1. Fetch Real Context from DB
-        response = supabase.table("properties")\
-            .select("title, price, currency, location, listing_type, roi_score, vibe, trust_bullets")\
-            .order("created_at", desc=True)\
-            .limit(10)\
-            .execute()
-        
+        response = supabase.table("properties").select("title, price, listing_type, roi_score, vibe").order("created_at", desc=True).limit(10).execute()
         market_data = response.data
         
-        # 2. Construct the Prompt with Data
         prompt = f"""
         You are Asta, an AI Real Estate Analyst for Ghana.
-        Here is the live data from our database (last 10 listings):
-        {json.dumps(market_data, indent=2)}
-
+        Live Data (Last 10 Listings): {json.dumps(market_data)}
         User Question: "{request.query}"
-
-        Instructions:
-        - Answer based ONLY on the data provided above.
-        - If the user asks for a recommendation, pick specific properties from the list.
-        - Mention the 'ROI Score' or 'Vibe' to prove you understand the data.
-        - Be professional but conversational.
+        Answer based ONLY on the data provided. Be professional.
         """
-
-        # 3. Get AI Response
-        model_response = client.models.generate_content(
-            model="gemini-2.0-flash",
-            contents=prompt
-        )
-        
+        model_response = client.models.generate_content(model="gemini-2.0-flash", contents=prompt)
         return {"reply": model_response.text}
-
     except Exception as e:
-        return {"reply": f"I'm having trouble connecting to the market data right now. ({str(e)})"}
+        return {"reply": f"System Error: {str(e)}"}
