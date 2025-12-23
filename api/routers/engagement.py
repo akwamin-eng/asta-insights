@@ -80,3 +80,41 @@ def subscribe_to_neighborhood(data: WatchlistRequest):
     except Exception as e:
         print(f"Watchlist Error: {e}")
         return {"status": "error", "detail": "Could not subscribe"}
+
+# --- 4. EMAIL TEST FIRE (New Feature) ---
+from api.utils import send_marketing_email
+
+class TestEmailRequest(BaseModel):
+    target_email: str
+
+@router.post("/marketing/test-blast")
+def trigger_sample_email(data: TestEmailRequest):
+    """
+    Demo: Sends a sample 'Market Watch' email to the target address.
+    Use this to prove to stakeholders that the marketing engine works.
+    """
+    # 1. Generate Fake "Asta Intelligence" Content
+    html_body = """
+    <h1>📉 Market Alert: East Legon</h1>
+    <p>Good morning,</p>
+    <p>Asta's Brain detected a <b>4% price drop</b> in 3-bedroom rentals this week.</p>
+    <div style="background-color: #f0fdf4; padding: 15px; border-radius: 8px; border-left: 5px solid #00C853;">
+        <h3>💎 Top Pick: The Avant-Garde</h3>
+        <p><b>Price:</b> $2,200/mo (Was $2,500)</p>
+        <p><b>ROI Score:</b> 8.4/10</p>
+        <p><i>"Highly secure with backup water. Best value in the area."</i></p>
+    </div>
+    <p>Stay ahead,<br>Asta AI</p>
+    """
+    
+    # 2. Fire the Email
+    result = send_marketing_email(
+        to_email=data.target_email,
+        subject="📉 Alert: Prices dropping in East Legon",
+        html_content=html_body
+    )
+    
+    if result:
+        return {"status": "sent", "provider_id": str(result)}
+    else:
+        return {"status": "failed", "detail": "Check server logs for API Key issues."}

@@ -302,3 +302,35 @@ async def upload_image_to_supabase(file_bytes: bytes, path: str, content_type: s
     except Exception as e:
         print(f"Supabase Upload Error: {e}")
         return ""
+
+# --- EMAIL MARKETING UTILS ---
+import resend
+import os
+
+# Initialize Resend (Ideally set this in your .env or Render Environment Variables)
+RESEND_API_KEY = os.getenv("RESEND_API_KEY") 
+resend.api_key = RESEND_API_KEY
+
+def send_marketing_email(to_email: str, subject: str, html_content: str):
+    """
+    Sends a marketing email via Resend.
+    Returns: The Email ID if successful, None if failed.
+    """
+    if not RESEND_API_KEY:
+        print("⚠️ Email skipped: No RESEND_API_KEY found.")
+        return None
+        
+    try:
+        # Use 'onboarding@resend.dev' if you don't have a verified domain yet
+        params = {
+            "from": "Asta Intelligence <onboarding@resend.dev>",
+            "to": [to_email],
+            "subject": subject,
+            "html": html_content,
+        }
+        
+        email = resend.Emails.send(params)
+        return email
+    except Exception as e:
+        print(f"❌ Email Failed: {e}")
+        return None
