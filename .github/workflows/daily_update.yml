@@ -2,10 +2,9 @@ name: Asta Autopilot
 
 on:
   schedule:
-    # Runs at 08:00 and 22:00 UTC daily
     - cron: '0 8 * * *'
     - cron: '0 22 * * *'
-  workflow_dispatch: # Allows manual triggering
+  workflow_dispatch:
 
 jobs:
   run-pipeline:
@@ -19,11 +18,20 @@ jobs:
       uses: actions/setup-python@v4
       with:
         python-version: '3.11'
-        cache: 'pip'
+        # We DISABLE cache temporarily to force a clean install of the new SDK
+        # cache: 'pip' 
 
-    - name: 📦 Install Dependencies
+    - name: 🧹 Nuclear Clean of Google Namespace
       run: |
+        pip uninstall -y google-generativeai google-ai-generativelanguage google-api-core
+        # We uninstall broadly to ensure the namespace is empty before we rebuild it
+
+    - name: 📦 Install Dependencies (Fresh)
+      run: |
+        pip install --upgrade pip
         pip install -r requirements.txt
+        # Explicitly verify the install
+        python -c "import google.genai; print('✅ SDK Installed Successfully')"
 
     - name: 🧠 Run Market Enrichment
       env:
@@ -31,6 +39,7 @@ jobs:
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
         SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+        GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
       run: |
         python asta_run.py
 
@@ -43,7 +52,7 @@ jobs:
       run: |
         python scripts/update_social_signals.py
 
-    - name: 📈 Run Predictive Pulse 🆕
+    - name: 📈 Run Predictive Pulse
       env:
         PYTHONPATH: .
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
