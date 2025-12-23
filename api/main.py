@@ -10,7 +10,7 @@ from api.utils import extract_gps_from_file, reverse_geocode, generate_property_
 app = FastAPI(
     title="Asta Insights API",
     description="AI-Powered Real Estate Intelligence for Ghana",
-    version="3.6"
+    version="3.7"
 )
 
 app.add_middleware(
@@ -63,7 +63,7 @@ async def upload_image_to_supabase(file_bytes: bytes, path: str, content_type: s
 
 @app.get("/", tags=["Health"])
 def read_root():
-    return {"status": "active", "system": "Asta Insights API v3.6 (Rent/Sale Support)", "docs_url": "/docs"}
+    return {"status": "active", "system": "Asta Insights API v3.7 (Full UX Suite)", "docs_url": "/docs"}
 
 @app.post("/utils/extract-gps", tags=["Utilities"])
 async def extract_gps(
@@ -81,7 +81,7 @@ async def extract_gps(
 @app.post("/listings/create", tags=["Lazy Agent"])
 async def create_lazy_listing(
     price: float = Form(...),
-    listing_type: str = Form("SALE"), # Default to SALE if missing
+    listing_type: str = Form("SALE"), # Default to SALE
     currency: str = Form("GHS"),
     description: Optional[str] = Form(None),
     location_hint: Optional[str] = Form(None),
@@ -211,3 +211,43 @@ def smart_radius_search(
         "expanded": current_radius > radius_km,
         "message": f"Found {len(results) if results else 0} properties within {current_radius}km"
     }
+
+@app.get("/listings/tags", tags=["User Experience"])
+def get_trending_tags():
+    """
+    **Trending Chips.**
+    Fixes 'Blank Search Bar Syndrome' by aggregating real data.
+    """
+    try:
+        # Fetch vibes and locations from DB
+        response = supabase.table("properties").select("vibe, location").execute()
+        data = response.data
+        
+        locations = {}
+        vibes = {}
+        
+        for item in data:
+            loc = item.get('location', 'Accra').split(',')[0].strip() # Get Neighborhood
+            vibe = item.get('vibe', 'Standard')
+            
+            if loc: locations[loc] = locations.get(loc, 0) + 1
+            if vibe: vibes[vibe] = vibes.get(vibe, 0) + 1
+            
+        # Sort and take top 5
+        top_locs = sorted(locations, key=locations.get, reverse=True)[:5]
+        top_vibes = sorted(vibes, key=vibes.get, reverse=True)[:5]
+        
+        # Build Chip List
+        chips = [f"📍 {l}" for l in top_locs] + [f"✨ {v}" for v in top_vibes]
+        
+        return {
+            "locations": top_locs,
+            "vibes": top_vibes,
+            "chips": chips if chips else ["📍 East Legon", "✨ Luxury", "📍 Cantonments", "✨ Modern"]
+        }
+    except Exception as e:
+        return {
+            "locations": ["East Legon"],
+            "vibes": ["Modern"],
+            "chips": ["📍 East Legon", "✨ Luxury"] # Fallback
+        }
