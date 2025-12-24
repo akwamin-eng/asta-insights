@@ -24,16 +24,16 @@ async def whatsapp_webhook(
             msg.body("System Error: AI Brain missing.")
             return Response(content=str(resp), media_type="application/xml")
 
-        # 2. Define Model Strategy (Primary + Fallback)
-        # We use the specific version ID '-001' which is more stable than the alias
-        primary_model = 'gemini-1.5-flash-001'
-        backup_model = 'gemini-1.0-pro' 
+        # 2. Define Valid Models (Based on your Debug List)
+        # We use the '2.0' series which is available in your account
+        primary_model = 'gemini-2.0-flash'
+        backup_model = 'gemini-2.0-flash-lite' 
 
         response_text = ""
 
         if Body:
             try:
-                # Attempt 1: Fast Flash Model
+                # Attempt 1: Gemini 2.0 Flash
                 chat = client.models.generate_content(
                     model=primary_model,
                     contents=[Body],
@@ -46,7 +46,7 @@ async def whatsapp_webhook(
 
             except Exception as e_primary:
                 print(f"⚠️ Primary Model Failed ({primary_model}): {e_primary}")
-                # Attempt 2: Backup Model (Reliable Legacy)
+                # Attempt 2: Gemini 2.0 Flash Lite (Backup)
                 try:
                     chat = client.models.generate_content(
                         model=backup_model,
