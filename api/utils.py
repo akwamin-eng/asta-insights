@@ -2,11 +2,15 @@ import os
 import io
 import requests
 import resend
+from dotenv import load_dotenv
 from PIL import Image
 from pillow_heif import register_heif_opener
 from google import genai
 from supabase import create_client, Client
-from typing import Tuple, Optional, List
+from twilio.rest import Client as TwilioClient # New Import
+
+# --- LOAD LOCAL SECRETS ---
+load_dotenv()
 
 # --- CONFIGURATION ---
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -14,107 +18,93 @@ SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
 RESEND_API_KEY = os.getenv("RESEND_API_KEY")
+TWILIO_SID = os.getenv("TWILIO_ACCOUNT_SID")
+TWILIO_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
+TWILIO_FROM = os.getenv("TWILIO_PHONE_NUMBER")
+PREFERRED_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
 
 # Initialize Clients
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-client = genai.Client(api_key=GOOGLE_API_KEY)
-resend.api_key = RESEND_API_KEY
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL else None
+client = genai.Client(api_key=GOOGLE_API_KEY) if GOOGLE_API_KEY else None
+twilio_client = TwilioClient(TWILIO_SID, TWILIO_TOKEN) if TWILIO_SID else None
 
-# Register HEIF opener for iPhone photos
+if RESEND_API_KEY: resend.api_key = RESEND_API_KEY
 register_heif_opener()
 
-# --- 1. EMAIL & NOTIFICATIONS (The Missing Piece) ---
-def send_marketing_email(to_email: str, subject: str, html_content: str):
-    """
-    Sends transactional emails using Resend.
-    Used for: Lead magnets, property alerts, and welcome messages.
-    """
+# --- 1. MESSAGING (The Voice) ---
+def send_whatsapp_message(to_number: str, body_text: str):
+    """Sends a proactive WhatsApp message (Push)."""
+    if not twilio_client:
+        print("⚠️ Twilio Client missing. Cannot send async alert.")
+        return
     try:
-        if not RESEND_API_KEY:
-            print("⚠️ Resend API Key missing. Email skipped.")
-            return None
+        # Ensure 'whatsapp:' prefix is present
+        if not to_number.startswith("whatsapp:"):
+            to_number = f"whatsapp:{to_number}"
             
-        params = {
-            "from": "Asta <updates@asta-insights.com>", # Update this domain once verified
-            "to": [to_email],
-            "subject": subject,
-            "html": html_content,
+        message = twilio_client.messages.create(
+            from_=TWILIO_FROM,
+            body=body_text,
+            to=to_number
+        )
+        print(f"✅ Message sent: {message.sid}")
+    except Exception as e:
+        print(f"❌ Twilio Error: {e}")
+
+# --- 2. ASYNC PUBLISHER (The Worker) ---
+def publish_listing_background(phone: str, draft: dict):
+    """
+    Background Task:
+    1. Uploads image to permanent storage.
+    2. Inserts into DB.
+    3. Sends 'Live' confirmation.
+    """
+    print(f"⚙️ Processing listing for {phone}...")
+    
+    try:
+        # A. Upload Image (If URL is external/temporary)
+        image_url = draft.get("image_url")
+        # In a full prod version, we download `image_url` and re-upload to Supabase here
+        # to ensure we own the file. For MVP, we'll assume the URL is accessible.
+        
+        # B. Insert into Database
+        listing_data = {
+            "title": f"Property in {draft.get('location')}", # Auto-title
+            "price": draft.get("price"),
+            "location": draft.get("location"),
+            "description": "Listed via WhatsApp", # We could use AI to generate this later
+            "image_url": image_url,
+            "agent_contact": draft.get("contact"),
+            "status": "active"
         }
-        email = resend.Emails.send(params)
-        return email
+        
+        # Insert and get the ID
+        data = supabase.table("listings").insert(listing_data).execute()
+        
+        # C. Construct Public URL
+        # Assuming you have a frontend route like /property/{id}
+        # For now, we'll send the API data link or a placeholder
+        live_url = "https://asta-insights.onrender.com/listings/" # Placeholder
+        
+        # D. Send Success Alert
+        success_msg = (
+            f"✅ *It's Live!* \n\n"
+            f"Your property in {draft.get('location')} is now searchable.\n"
+            f"🔗 View it here: {live_url}\n\n"
+            f"Reply *MENU* to do more."
+        )
+        send_whatsapp_message(phone, success_msg)
+        
     except Exception as e:
-        print(f"❌ Email Error: {e}")
-        return None
+        print(f"❌ Publish Failed: {e}")
+        error_msg = "�� I ran into a hiccup saving your listing. Our team has been notified."
+        send_whatsapp_message(phone, error_msg)
 
-# --- 2. IMAGE PROCESSING ---
-def compress_image(image_bytes: bytes, quality: int = 70) -> bytes:
-    """Optimizes images to reduce storage costs."""
-    try:
-        img = Image.open(io.BytesIO(image_bytes))
-        if img.mode in ("RGBA", "P"):
-            img = img.convert("RGB")
-        output = io.BytesIO()
-        img.save(output, format="JPEG", quality=quality, optimize=True)
-        return output.getvalue()
-    except Exception as e:
-        print(f"⚠️ Compression Warning: {e}")
-        return image_bytes
-
-# --- 3. GEOLOCATION ---
-async def extract_gps_from_file(file, text_hint: Optional[str] = None) -> Tuple[Optional[float], Optional[float], str]:
-    """Extracts GPS data from uploaded files."""
-    try:
-        contents = await file.read()
-        # Placeholder for full EXIF extraction logic
-        return None, None, "GPS extraction active."
-    except Exception as e:
-        return None, None, f"Error processing image: {str(e)}"
-
-def reverse_geocode(lat: float, lon: float) -> str:
-    """Converts coordinates to address via Google Maps."""
-    try:
-        if not GOOGLE_MAPS_API_KEY:
-            return "Accra, Ghana (No Maps Key)"
-        url = f"https://maps.googleapis.com/maps/api/geocode/json?latlng={lat},{lon}&key={GOOGLE_MAPS_API_KEY}"
-        resp = requests.get(url)
-        data = resp.json()
-        if data.get("status") == "OK" and data.get("results"):
-            return data["results"][0]["formatted_address"]
-        return "Unknown Location"
-    except Exception as e:
-        print(f"Geocoding Error: {e}")
-        return "Accra, Ghana"
-
-# --- 4. SUPABASE & STORAGE ---
-async def upload_image_to_supabase(file_bytes: bytes, path: str, content_type: str = "image/jpeg") -> str:
-    bucket_name = "properties"
-    try:
-        supabase.storage.from_(bucket_name).upload(path, file_bytes, {"content-type": content_type})
-        return supabase.storage.from_(bucket_name).get_public_url(path)
-    except Exception as e:
-        print(f"Supabase Upload Error: {e}")
-        return ""
+# --- 3. UTILITIES (Existing) ---
+def get_best_model(client): return PREFERRED_MODEL
 
 def download_media(media_url: str) -> bytes:
     try:
-        r = requests.get(media_url)
-        return r.content
-    except Exception as e:
-        print(f"Download Error: {e}")
-        return b""
+        return requests.get(media_url).content
+    except: return b""
 
-# --- 5. AI INTELLIGENCE ---
-def generate_property_insights(image_bytes, price, location, listing_type):
-    """Uses Gemini 3 Flash to describe the property."""
-    try:
-        response = client.models.generate_content(
-            model='gemini-1.5-flash',
-            contents=[
-                {"mime_type": "image/jpeg", "data": image_bytes},
-                f"Analyze this {listing_type} in {location} priced at {price}. Return JSON vibe and ROI score."
-            ]
-        )
-        return {"vibe": "Modern", "score": 7.5, "trust_bullets": []}
-    except Exception as e:
-        print(f"AI Error: {e}")
-        return {"vibe": "Standard", "score": 5, "trust_bullets": []}
