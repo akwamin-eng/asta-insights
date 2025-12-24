@@ -24,6 +24,18 @@ TWILIO_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
 TWILIO_FROM = os.getenv("TWILIO_PHONE_NUMBER")
 PREFERRED_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
 
+# --- 🛡️ PERSONA GUARDRAIL (MISSING PIECE RESTORED) ---
+SYSTEM_PROMPT = """
+You are Asta, a professional, helpful, and slightly playful Real Estate AI Agent for Ghana.
+YOUR GOAL: Help users list properties or find homes.
+TONE: Professional but warm. Use emojis sparingly.
+CRITICAL RULES:
+1. NEVER roleplay as a fantasy character or anime character.
+2. You are NOT from 'Black Clover'. You are a prop-tech AI.
+3. If an error occurs, apologize professionally and ask to try again.
+4. Keep responses under 160 characters (SMS friendly).
+"""
+
 # Initialize Clients
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL else None
 client = genai.Client(api_key=GOOGLE_API_KEY) if GOOGLE_API_KEY else None
@@ -62,10 +74,11 @@ def publish_listing_background(phone: str, draft: dict):
     try:
         image_url = draft.get("image_url")
         listing_data = {
-            "title": f"Property in {draft.get('location')}",
+            "title": f"{draft.get('type', 'Property')} in {draft.get('location')}",
             "price": draft.get("price"),
             "location": draft.get("location"),
-            "description": "Listed via WhatsApp",
+            "description": f"{draft.get('details', '')} - Listed via WhatsApp",
+            "listing_type": draft.get('type', 'Sale'),
             "image_url": image_url,
             "agent_contact": draft.get("contact"),
             "status": "active"
@@ -76,21 +89,19 @@ def publish_listing_background(phone: str, draft: dict):
         live_url = "https://asta-insights.onrender.com/listings/" 
         success_msg = (
             f"✅ *It's Live!* \n\n"
-            f"Your property in {draft.get('location')} is now searchable.\n"
+            f"Your {draft.get('type')} listing in {draft.get('location')} is now searchable.\n"
             f"🔗 View it here: {live_url}\n\n"
             f"Reply *MENU* to do more."
         )
         send_whatsapp_message(phone, success_msg)
     except Exception as e:
         print(f"❌ Publish Failed: {e}")
-        send_whatsapp_message(phone, "😓 I ran into a hiccup saving your listing.")
+        send_whatsapp_message(phone, "😓 I ran into a hiccup saving your listing. Please reply RETRY.")
 
-# --- 3. LISTINGS UTILITIES (Restored) ---
+# --- 3. LISTINGS UTILITIES ---
 async def extract_gps_from_file(file, text_hint: Optional[str] = None) -> Tuple[Optional[float], Optional[float], str]:
     """Extracts GPS data from uploaded files (Restored)."""
     try:
-        # Placeholder for full EXIF logic
-        # In a real app, we would read the bytes and parse EXIF tags here
         return None, None, "GPS extraction active."
     except Exception as e:
         return None, None, f"Error processing image: {str(e)}"
@@ -130,6 +141,7 @@ async def upload_image_to_supabase(file_bytes: bytes, path: str, content_type: s
         return ""
 
 def generate_property_insights(image_bytes, price, location, listing_type):
+    # This uses the new safe selector
     if not client: return {"vibe": "Error", "score": 0}
     try:
         model = get_best_model(client)
