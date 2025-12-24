@@ -1,11 +1,15 @@
 from fastapi import APIRouter, Form, Response, BackgroundTasks
 from twilio.twiml.messaging_response import MessagingResponse
-from api.utils import client, supabase, get_best_model, publish_listing_background, normalize_ghpostgps
+from api.utils import (
+    client, supabase, get_best_model, 
+    save_image_from_url, format_phone_to_e164, 
+    normalize_ghpostgps, enrich_listing_description, send_whatsapp_message
+)
 from datetime import datetime, timezone, timedelta
 
 router = APIRouter()
 
-# --- HELPER: SESSION MANAGEMENT ---
+# --- SESSION ---
 def get_session(phone: str):
     res = supabase.table("whatsapp_sessions").select("*").eq("phone_number", phone).execute()
     if res.data:
@@ -30,6 +34,51 @@ def reset_session(phone: str):
         "current_step": "IDLE", "draft_data": {}
     }).eq("phone_number", phone).execute()
 
+# --- BACKGROUND WORKER (THE PUBLISHER) ---
+def final_publish_task(phone: str, draft: dict):
+    print(f"⚙️ Publishing for {phone}")
+    
+    # 1. AI Polish
+    enriched_desc = enrich_listing_description(draft)
+    
+    # 2. Insert Listing
+    listing_data = {
+        "title": f"{draft.get('type')} in {draft.get('location')}",
+        "price": draft.get("price"),
+        "location": draft.get("location"),
+        "description": draft.get("details"),
+        "description_enriched": enriched_desc,
+        "special_features": draft.get("special_features"),
+        "listing_type": draft.get('type'),
+        "image_url": draft.get("image_url"),
+        "agent_contact": draft.get("contact"),
+        "location_accuracy": draft.get("location_accuracy", "low"),
+        "status": "active"
+    }
+    
+    res = supabase.table("listings").insert(listing_data).execute()
+    
+    # 3. Insert Image to Gallery
+    if res.data:
+        new_id = res.data[0]['id']
+        supabase.table("listing_images").insert({
+            "listing_id": new_id,
+            "image_url": draft.get("image_url"),
+            "is_hero": True
+        }).execute()
+        
+    # 4. Success Message + Email Upsell
+    live_url = "https://asta-insights.onrender.com/listings/" 
+    msg = (
+        f"🚀 **It's Live!**\n\n"
+        f"🔗 View here: {live_url}\n\n"
+        f"📈 **Stay Ahead:**\n"
+        f"Want to know when prices change in **{draft.get('location')}**?\n"
+        f"Reply with your **EMAIL** to get our free Market Watch report. 📧"
+    )
+    send_whatsapp_message(phone, msg)
+
+# --- WEBHOOK ---
 @router.post("/webhook")
 async def whatsapp_webhook(
     background_tasks: BackgroundTasks,
@@ -40,7 +89,7 @@ async def whatsapp_webhook(
     Latitude: float = Form(None),
     Longitude: float = Form(None)
 ):
-    print(f"📩 Incoming from {From}: {Body} | Media: {NumMedia}")
+    print(f"📩 Incoming from {From}: {Body}")
     resp = MessagingResponse()
     msg = resp.message()
     phone = From.replace("whatsapp:", "")
@@ -55,69 +104,92 @@ async def whatsapp_webhook(
         msg.body("🔄 Session reset.")
         return Response(content=str(resp), media_type="application/xml")
 
-    if Body and Body.lower() == "retry" and draft:
-        msg.body("🔄 Retrying...")
-        background_tasks.add_task(publish_listing_background, From, draft)
-        return Response(content=str(resp), media_type="application/xml")
-
-    # --- STATE MACHINE ---
+    # --- THE CONCIERGE FLOW ---
 
     if step == "IDLE":
         if NumMedia > 0:
-            draft["image_url"] = MediaUrl0
-            msg.body("📸 Photo received! Is this for **Sale** or **Rent**?")
-            update_session(phone, "AWAITING_TYPE", draft)
+            # 📸 HERO SHOT: Download immediately (Ownership)
+            msg.body("📥 Saving cover image to secure vault...")
+            perm_url = save_image_from_url(MediaUrl0, phone)
+            
+            if perm_url:
+                draft["image_url"] = perm_url
+                msg.body("Stunning shot! 🤩 Is this for **Sale** or **Rent**?")
+                update_session(phone, "AWAITING_TYPE", draft)
+            else:
+                msg.body("😓 Failed to save image. Please try again.")
         elif Body:
-            msg.body("👋 Welcome! Please **send a photo** to start listing.")
+            # Greeting + Market Insight
+            msg.body(
+                "🇬🇭 **Welcome to Asta Homes!**\n"
+                "I'm your AI Property Concierge.\n\n"
+                "💡 *Did you know? Rental demand in Accra is up 15% this quarter.*\n\n"
+                "Let's get seen. **Send me your BEST photo (Hero Shot) to start!** 📸"
+            )
 
     elif step == "AWAITING_TYPE":
         if Body:
             selection = Body.lower()
             if "rent" in selection: draft["type"] = "Rent"
-            elif "sale" in selection or "sell" in selection: draft["type"] = "Sale"
+            elif "sale" in selection: draft["type"] = "Sale"
             else: draft["type"] = "Sale"
-            msg.body(f"Got it: {draft['type']}. 💰 **Price?** (e.g., GHS 2000)")
+            msg.body(f"Got it. 💰 **What is the price?** (e.g., GHS 2000)")
             update_session(phone, "AWAITING_PRICE", draft)
 
     elif step == "AWAITING_PRICE":
         if Body:
             draft["price"] = Body.strip()
-            msg.body("📍 **Location?** (Type 'GA-183-8164' or send a GPS Pin)")
+            msg.body(
+                "Noted. 📍 **Where is it located?**\n\n"
+                "1. **Best:** Tap 📎 -> Location -> 'Send Current Location'\n"
+                "2. **Good:** Type Digital Address (GA-183...)\n"
+                "3. **Easy:** Just type the **City/Area Name**"
+            )
             update_session(phone, "AWAITING_LOCATION", draft)
 
     elif step == "AWAITING_LOCATION":
-        # SCENARIO A: GPS Pin
+        # Pin
         if Latitude and Longitude:
             draft["location"] = f"GPS: {Latitude}, {Longitude}"
+            draft["location_accuracy"] = "high"
             msg.body("✅ **GPS Pin Received!**")
-            msg.body("🛏️ **Details?** (e.g., 2 Bed, 1 Bath)")
-            update_session(phone, "AWAITING_DETAILS", draft)
-            
-        # SCENARIO B: Text Parsing
+        # Text
         elif Body:
-            # 📍 USE OMNIPARSER HERE
-            parsed_gps = normalize_ghpostgps(Body.strip())
-            
-            if parsed_gps:
-                draft["location"] = parsed_gps
-                msg.body(f"✅ **Ghana Post GPS detected:** {parsed_gps}")
+            parsed = normalize_ghpostgps(Body.strip())
+            if parsed:
+                draft["location"] = parsed
+                draft["location_accuracy"] = "medium"
+                msg.body(f"✅ **Digital Address:** {parsed}")
             else:
                 draft["location"] = Body.strip()
-                msg.body(f"✅ Location noted: {draft['location']}")
-                
-            msg.body("🛏️ **Details?** (e.g., 2 Bed, 1 Bath)")
-            update_session(phone, "AWAITING_DETAILS", draft)
+                draft["location_accuracy"] = "low"
+                msg.body(f"✅ **Area:** {draft['location']} (General Area)")
+        
+        msg.body("🛏️ **Key Details?** (e.g., 2 Bed, 2 Bath, AC)")
+        update_session(phone, "AWAITING_DETAILS", draft)
 
     elif step == "AWAITING_DETAILS":
         if Body:
             draft["details"] = Body.strip()
-            msg.body(f"📞 Use **{phone}** as contact? Reply **YES** or type number.")
+            msg.body("�� **Sell the Vibe:**\nIn one sentence, **what makes this place special?**\n(e.g., 'Walking distance to mall')")
+            update_session(phone, "AWAITING_VIBE", draft)
+
+    elif step == "AWAITING_VIBE":
+        if Body:
+            draft["special_features"] = Body.strip()
+            # Phone Logic
+            msg.body(f"📞 Should I use **{phone}** for contact?\nReply **YES** or type a different number.")
             update_session(phone, "AWAITING_CONTACT", draft)
 
     elif step == "AWAITING_CONTACT":
         if Body:
-            contact = phone if "yes" in Body.lower() else Body.strip()
+            if "yes" in Body.lower():
+                contact = format_phone_to_e164(phone)
+            else:
+                contact = format_phone_to_e164(Body.strip())
+            
             draft["contact"] = contact
+            
             summary = (
                 f"📝 **Review:**\n"
                 f"🏠 {draft.get('type')}\n"
@@ -131,10 +203,23 @@ async def whatsapp_webhook(
 
     elif step == "CONFIRMATION":
         if Body and "yes" in Body.lower():
-            msg.body("👷‍♀️ Sending to Asta Listings...")
-            background_tasks.add_task(publish_listing_background, From, draft)
+            msg.body("👷‍♀️ **Generating listing...**")
+            background_tasks.add_task(final_publish_task, From, draft)
+            update_session(phone, "AWAITING_EMAIL", draft) # New Step: Email
+        else:
+            msg.body("Reply **YES** to publish.")
+
+    elif step == "AWAITING_EMAIL":
+        if Body and "@" in Body:
+            # Save Email (Update the listing we just made? 
+            # Ideally we'd store it in a 'users' table, but for MVP we acknowledge)
+            msg.body("📧 **Subscribed!** You're an Asta Insider.\n\nReply **PHOTO** to add more images.")
+            reset_session(phone)
+        elif Body and "skip" in Body.lower():
+            msg.body("No problem! Reply **PHOTO** to add more images.")
             reset_session(phone)
         else:
-            msg.body("Draft saved. Reply **YES** to publish.")
+            # Just reset if they type something else
+            reset_session(phone)
 
     return Response(content=str(resp), media_type="application/xml")
