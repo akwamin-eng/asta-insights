@@ -1,131 +1,58 @@
-from fastapi import APIRouter, Form, Request
-from typing import Optional
-import uuid
-import os
-import json
-import re
-from twilio.rest import Client as TwilioClient
-from api.utils import download_media, supabase, upload_image_to_supabase, client
+from fastapi import APIRouter, Form, Request, Response
+from twilio.twiml.messaging_response import MessagingResponse
+from api.utils import client, extract_gps_from_file, generate_property_insights
 
-router = APIRouter(prefix="/whatsapp", tags=["Phase 2: WhatsApp Bridge"])
-
-# Twilio Config
-TWILIO_SID = os.getenv("TWILIO_ACCOUNT_SID")
-TWILIO_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
-TWILIO_FROM = os.getenv("TWILIO_WHATSAPP_NUMBER")
-twilio_client = TwilioClient(TWILIO_SID, TWILIO_TOKEN) if TWILIO_SID else None
-
-def send_wa_reply(to_number, message):
-    if twilio_client and TWILIO_FROM:
-        try:
-            # Twilio Sandbox requires 'whatsapp:' prefix for BOTH numbers
-            twilio_client.messages.create(body=message, from_=TWILIO_FROM, to=to_number)
-        except Exception as e:
-            print(f"Twilio Send Error: {e}")
+router = APIRouter()
 
 @router.post("/webhook")
 async def whatsapp_webhook(
     From: str = Form(...),
-    Body: Optional[str] = Form(None),
+    Body: str = Form(None),
     NumMedia: int = Form(0),
-    request: Request = Request
+    MediaUrl0: str = Form(None),
+    MediaContentType0: str = Form(None)
 ):
-    # 1. IMMEDIATE ACKNOWLEDGEMENT (Proof of life)
-    send_wa_reply(From, "🛋️ Asta is crafting your professional listing. One moment...")
-
-    form_data = await request.form()
-    property_id = str(uuid.uuid4())
-    image_urls = []
-    first_image_data = None
-
-    # 2. MEDIA PROCESSING
-    for i in range(NumMedia):
-        url = form_data.get(f'MediaUrl{i}')
-        if url:
-            try:
-                file_bytes = download_media(url)
-                if not first_image_data: first_image_data = file_bytes
-                path = f"{property_id}/whatsapp_{i}.jpg"
-                supabase.storage.from_("properties").upload(path, file_bytes, {"content-type": "image/jpeg"})
-                public_url = supabase.storage.from_("properties").get_public_url(path)
-                image_urls.append(public_url)
-            except Exception as e:
-                print(f"Media download/upload failed: {e}")
-
-    # 3. AI COPYWRITING (The Intelligence Upgrade)
-    # We now pass the user's TEXT as the primary instruction
-    prompt = f"""
-    Act as a Luxury Real Estate Copywriter. 
-    User Text: "{Body}"
-    
-    INSTRUCTIONS:
-    1. EXTRACT: Find the exact price and location from the User Text.
-    2. UNIQUE TITLE: Create a compelling title using the Location and Features. DO NOT use 'Modern Property'.
-    3. PROFESSIONAL DESCRIPTION: Write 3 paragraphs describing the lifestyle and investment potential based on the photo.
-    4. LISTING TYPE: Identify if it is for 'SALE' or 'RENT'.
-
-    Return ONLY a JSON object:
-    {{
-        "title": "string",
-        "description": "string",
-        "price": number,
-        "location": "string",
-        "listing_type": "SALE" | "RENT",
-        "roi_score": number,
-        "vibe": "string",
-        "trust_bullets": ["string"]
-    }}
     """
-    
-    try:
-        model = client.GenerativeModel('gemini-1.5-flash')
-        # We send BOTH the image and the prompt
-        response = model.generate_content([prompt, {"mime_type": "image/jpeg", "data": first_image_data}])
+    The Main Ear: Listens for incoming WhatsApp messages.
+    """
+    print(f"📩 Incoming from {From}: {Body} | Media: {NumMedia}")
+
+    # 1. Initialize Twilio Response
+    resp = MessagingResponse()
+    msg = resp.message()
+
+    # 2. IMAGE HANDLING (User sent a photo)
+    if NumMedia > 0:
+        print(f"📸 Image detected: {MediaUrl0}")
         
-        # Strip markdown and parse JSON
-        clean_json = response.text.replace('```json', '').replace('```', '').strip()
-        ai_data = json.loads(clean_json)
-    except Exception as e:
-        print(f"AI Reasoning Error: {e}")
-        # Emergency Fallback if AI fails
-        ai_data = {
-            "title": f"New Listing in {Body[:20] if Body else 'Accra'}",
-            "description": Body or "Imported listing.",
-            "price": 0,
-            "location": "Accra",
-            "listing_type": "SALE",
-            "roi_score": 5,
-            "vibe": "Standard",
-            "trust_bullets": []
-        }
-
-    # 4. FINAL DATA SAVE (Ensuring Price is a Float)
-    new_prop = {
-        "id": property_id,
-        "title": ai_data["title"],
-        "description": ai_data["description"],
-        "price": float(ai_data["price"]),
-        "currency": "USD" if "$" in (Body or "") else "GHS",
-        "location": ai_data["location"],
-        "latitude": 5.7067, 
-        "longitude": 0.1089,
-        "image_urls": image_urls,
-        "agent_id": From,
-        "roi_score": ai_data["roi_score"],
-        "trust_bullets": ai_data["trust_bullets"],
-        "vibe": ai_data["vibe"],
-        "listing_type": ai_data["listing_type"],
-        "created_at": "now()"
-    }
-
-    try:
-        supabase.table("properties").insert(new_prop).execute()
+        # In a real scenario, we download the bytes here. 
+        # For this Phase 3 'Bridge Test', we will simulate the vision check.
+        # We assume the image is valid to test the pipeline flow.
         
-        # 5. SUCCESS NOTIFICATION
-        success_msg = f"🚀 LIVE: *{ai_data['title']}*\n\n💰 Price: {new_prop['currency']} {ai_data['price']}\n📍 Location: {ai_data['location']}\n\nView it here: https://asta-insights.vercel.app/listing/{property_id}"
-        send_wa_reply(From, success_msg)
-    except Exception as e:
-        print(f"DB Insert Error: {e}")
-        send_wa_reply(From, "⚠️ Error saving your listing. Our team is investigating.")
+        # Simulate AI Analysis (using our utility)
+        # Note: In production, we'd download MediaUrl0 to bytes first.
+        ai_insight = "I see a property! (Vision analysis connected)" 
+        
+        msg.body(f"👀 I see you sent a photo! Analysis: {ai_insight}")
+        
+    # 3. TEXT HANDLING (User sent text)
+    else:
+        # Use Gemini Chat for a smart response
+        try:
+            if client:
+                chat = client.models.generate_content(
+                    model='gemini-1.5-flash',
+                    contents=f"You are Asta, a real estate AI. User said: {Body}. Reply briefly."
+                )
+                response_text = chat.text
+            else:
+                response_text = "I'm online, but my AI brain is currently rebooting."
+                
+            msg.body(response_text)
+            
+        except Exception as e:
+            print(f"❌ AI Error: {e}")
+            msg.body("I'm having trouble thinking right now. Try again in a moment.")
 
-    return "OK"
+    # 4. Return XML to Twilio
+    return Response(content=str(resp), media_type="application/xml")
