@@ -2,6 +2,7 @@ import os
 import io
 import requests
 import resend
+import re
 from dotenv import load_dotenv
 from PIL import Image
 from pillow_heif import register_heif_opener
@@ -24,7 +25,7 @@ TWILIO_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
 TWILIO_FROM = os.getenv("TWILIO_PHONE_NUMBER")
 PREFERRED_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
 
-# --- 🛡️ PERSONA GUARDRAIL (MISSING PIECE RESTORED) ---
+# --- 🛡️ PERSONA GUARDRAIL ---
 SYSTEM_PROMPT = """
 You are Asta, a professional, helpful, and slightly playful Real Estate AI Agent for Ghana.
 YOUR GOAL: Help users list properties or find homes.
@@ -49,40 +50,70 @@ def get_best_model(client):
     """Returns the preferred model ID from env vars."""
     return PREFERRED_MODEL
 
+# --- 📍 OMNIPARSER: LOCATION NORMALIZER ---
+def normalize_ghpostgps(text: str) -> Optional[str]:
+    """
+    Parses messy input to find a Ghana Post GPS code.
+    Input: "ga1838164", "GA 183 8164", "ga-183-8164"
+    Output: "GA-183-8164" or None
+    """
+    if not text: return None
+    
+    # 1. Clean: Remove spaces, dashes, dots, convert to uppercase
+    clean = re.sub(r"[^A-Z0-9]", "", text.upper())
+    
+    # 2. Check Pattern: Region(2) + District(3-4) + Number(3-4)
+    # Total length usually 9-11 chars (e.g., GA1838164 is 9)
+    if 8 <= len(clean) <= 12 and clean[:2].isalpha() and clean[2:].isdigit():
+        # Re-format with dashes
+        # Logic: Region-District-Number
+        # Usually District is 3 or 4 digits. We assume a standard split if ambiguous.
+        
+        region = clean[:2]
+        rest = clean[2:]
+        
+        # Heuristic: Split remaining digits roughly in half
+        mid = len(rest) // 2
+        district = rest[:mid]
+        number = rest[mid:]
+        
+        # However, standard formatting is often fixed logic, 
+        # but flexible dash insertion is safer for storage.
+        # Let's verify specifically against standard Ghana Post lengths if possible.
+        # For this MVP, we will standardize to: XX-YYYY-ZZZZ
+        
+        return f"{region}-{district}-{number}"
+        
+    return None
+
 # --- 1. MESSAGING (The Voice) ---
 def send_whatsapp_message(to_number: str, body_text: str):
     """Sends a proactive WhatsApp message (Push)."""
-    if not twilio_client:
-        print("⚠️ Twilio Client missing. Cannot send async alert.")
-        return
+    if not twilio_client: return
     try:
-        if not to_number.startswith("whatsapp:"):
-            to_number = f"whatsapp:{to_number}"
-        message = twilio_client.messages.create(
-            from_=TWILIO_FROM,
-            body=body_text,
-            to=to_number
-        )
-        print(f"✅ Message sent: {message.sid}")
-    except Exception as e:
-        print(f"❌ Twilio Error: {e}")
+        if not to_number.startswith("whatsapp:"): to_number = f"whatsapp:{to_number}"
+        twilio_client.messages.create(from_=TWILIO_FROM, body=body_text, to=to_number)
+    except Exception as e: print(f"❌ Twilio Error: {e}")
 
 # --- 2. ASYNC PUBLISHER (The Worker) ---
 def publish_listing_background(phone: str, draft: dict):
     """Background Task: Uploads image, inserts to DB, and sends 'Live' alert."""
     print(f"⚙️ Processing listing for {phone}...")
     try:
-        image_url = draft.get("image_url")
         listing_data = {
             "title": f"{draft.get('type', 'Property')} in {draft.get('location')}",
             "price": draft.get("price"),
             "location": draft.get("location"),
             "description": f"{draft.get('details', '')} - Listed via WhatsApp",
             "listing_type": draft.get('type', 'Sale'),
-            "image_url": image_url,
+            "image_url": draft.get("image_url"),
             "agent_contact": draft.get("contact"),
             "status": "active"
         }
+        
+        # ERROR TRAP: Print data to logs before inserting to debug Schema Mismatches
+        print(f"📝 Inserting Data: {listing_data}")
+
         if supabase:
             supabase.table("listings").insert(listing_data).execute()
         
@@ -96,15 +127,12 @@ def publish_listing_background(phone: str, draft: dict):
         send_whatsapp_message(phone, success_msg)
     except Exception as e:
         print(f"❌ Publish Failed: {e}")
+        # Send a more helpful error message to the user? No, keep it simple for them.
         send_whatsapp_message(phone, "😓 I ran into a hiccup saving your listing. Please reply RETRY.")
 
-# --- 3. LISTINGS UTILITIES ---
+# --- 3. UTILITIES (Restored) ---
 async def extract_gps_from_file(file, text_hint: Optional[str] = None) -> Tuple[Optional[float], Optional[float], str]:
-    """Extracts GPS data from uploaded files (Restored)."""
-    try:
-        return None, None, "GPS extraction active."
-    except Exception as e:
-        return None, None, f"Error processing image: {str(e)}"
+    return None, None, "GPS extraction active."
 
 def compress_image(image_bytes: bytes, quality: int = 70) -> bytes:
     try:
@@ -113,12 +141,10 @@ def compress_image(image_bytes: bytes, quality: int = 70) -> bytes:
         output = io.BytesIO()
         img.save(output, format="JPEG", quality=quality, optimize=True)
         return output.getvalue()
-    except Exception:
-        return image_bytes
+    except Exception: return image_bytes
 
 def download_media(media_url: str) -> bytes:
-    try:
-        return requests.get(media_url).content
+    try: return requests.get(media_url).content
     except: return b""
 
 def reverse_geocode(lat: float, lon: float) -> str:
@@ -129,19 +155,16 @@ def reverse_geocode(lat: float, lon: float) -> str:
         if data.get("status") == "OK" and data.get("results"):
             return data["results"][0]["formatted_address"]
         return "Unknown Location"
-    except Exception:
-        return "Accra, Ghana"
+    except Exception: return "Accra, Ghana"
 
 async def upload_image_to_supabase(file_bytes: bytes, path: str, content_type: str = "image/jpeg") -> str:
     if not supabase: return ""
     try:
         supabase.storage.from_("properties").upload(path, file_bytes, {"content-type": content_type})
         return supabase.storage.from_("properties").get_public_url(path)
-    except Exception:
-        return ""
+    except Exception: return ""
 
 def generate_property_insights(image_bytes, price, location, listing_type):
-    # This uses the new safe selector
     if not client: return {"vibe": "Error", "score": 0}
     try:
         model = get_best_model(client)
@@ -161,8 +184,6 @@ def send_marketing_email(to_email: str, subject: str, html_content: str):
     try:
         return resend.Emails.send({
             "from": "Asta <updates@asta-insights.com>",
-            "to": [to_email],
-            "subject": subject,
-            "html": html_content,
+            "to": [to_email], "subject": subject, "html": html_content,
         })
     except Exception: return None
