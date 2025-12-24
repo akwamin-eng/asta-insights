@@ -20,7 +20,28 @@ client = genai.Client(api_key=GOOGLE_API_KEY)
 # Register HEIF opener for iPhone photos
 register_heif_opener()
 
-# --- 1. GEOLOCATION UTILITIES ---
+# --- 1. IMAGE PROCESSING (The Missing Piece) ---
+def compress_image(image_bytes: bytes, quality: int = 70) -> bytes:
+    """
+    Optimizes images to reduce storage costs and load times.
+    Converts RGBA/PNG to JPEG to ensure compatibility.
+    """
+    try:
+        img = Image.open(io.BytesIO(image_bytes))
+        
+        # Convert transparent images (PNG) to RGB (JPEG)
+        if img.mode in ("RGBA", "P"):
+            img = img.convert("RGB")
+            
+        output = io.BytesIO()
+        # Save compressed version
+        img.save(output, format="JPEG", quality=quality, optimize=True)
+        return output.getvalue()
+    except Exception as e:
+        print(f"⚠️ Compression Warning: {e}")
+        return image_bytes  # Return original if compression fails
+
+# --- 2. GEOLOCATION UTILITIES ---
 async def extract_gps_from_file(file, text_hint: Optional[str] = None) -> Tuple[Optional[float], Optional[float], str]:
     """
     Extracts GPS data from an uploaded image file.
@@ -29,7 +50,7 @@ async def extract_gps_from_file(file, text_hint: Optional[str] = None) -> Tuple[
     try:
         contents = await file.read()
         image = Image.open(io.BytesIO(contents))
-        # Basic placeholder for EXIF logic to prevent crash
+        # Basic placeholder for EXIF logic
         return None, None, "GPS extraction active."
     except Exception as e:
         return None, None, f"Error processing image: {str(e)}"
@@ -53,7 +74,7 @@ def reverse_geocode(lat: float, lon: float) -> str:
         print(f"Geocoding Error: {e}")
         return "Accra, Ghana"
 
-# --- 2. SUPABASE & STORAGE ---
+# --- 3. SUPABASE & STORAGE ---
 async def upload_image_to_supabase(file_bytes: bytes, path: str, content_type: str = "image/jpeg") -> str:
     bucket_name = "properties"
     try:
@@ -71,7 +92,7 @@ def download_media(media_url: str) -> bytes:
         print(f"Download Error: {e}")
         return b""
 
-# --- 3. AI INTELLIGENCE ---
+# --- 4. AI INTELLIGENCE ---
 def generate_property_insights(image_bytes, price, location, listing_type):
     """Uses Gemini 3 Flash to describe the property."""
     try:
