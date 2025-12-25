@@ -27,7 +27,7 @@ TWILIO_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
 TWILIO_FROM = os.getenv("TWILIO_PHONE_NUMBER")
 PREFERRED_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
 
-# --- 🛡️ PERSONA GUARDRAIL (Phase 3) ---
+# --- 🛡️ PERSONA GUARDRAIL ---
 SYSTEM_PROMPT = """
 You are Asta, the AI Property Concierge for Ghana.
 GOAL: Help users list homes and provide market insights.
@@ -46,11 +46,10 @@ register_heif_opener()
 def get_best_model(client): return PREFERRED_MODEL
 
 # ==========================================
-# 📸 IMAGE TOOLS (Phase 1 & 3 Unified)
+# 📸 IMAGE TOOLS (DIAGNOSTIC MODE)
 # ==========================================
 
 def compress_image(image_bytes: bytes, quality: int = 70) -> bytes:
-    """Standard compression for all uploads."""
     try:
         img = Image.open(io.BytesIO(image_bytes))
         if img.mode in ("RGBA", "P"): img = img.convert("RGB")
@@ -60,55 +59,70 @@ def compress_image(image_bytes: bytes, quality: int = 70) -> bytes:
     except: return image_bytes
 
 def download_media(media_url: str) -> bytes:
-    """(Phase 1 Legacy) Helper to download bytes."""
     try: return requests.get(media_url).content
     except: return b""
 
-def save_image_from_url(image_url: str, phone: str) -> Optional[str]:
-    """(Phase 3 Solvency) Downloads & Uploads to OWN Storage."""
-    if not supabase or not image_url: return None
+def save_image_from_url(image_url: str, phone: str) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Returns: (public_url, error_message)
+    """
+    if not supabase: return None, "Supabase client not initialized."
+    if not image_url: return None, "No Image URL received."
+    
     try:
-        response = requests.get(image_url)
-        if response.status_code != 200: return None
+        # 1. DOWNLOAD ATTEMPT
+        # Try with Auth first (Twilio Security)
+        auth = (TWILIO_SID, TWILIO_TOKEN) if "twilio" in image_url else None
+        response = requests.get(image_url, auth=auth)
+        
+        # If 401/403, try without auth (Sometimes Twilio redirects to public S3)
+        if response.status_code in [401, 403]:
+             print("⚠️ Auth failed, retrying without auth...")
+             response = requests.get(image_url)
+
+        if response.status_code != 200:
+            return None, f"Download Failed: HTTP {response.status_code}"
+            
         image_bytes = response.content
         compressed_bytes = compress_image(image_bytes)
         
+        # 2. UPLOAD ATTEMPT
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
         filename = f"{phone}_{timestamp}.jpg"
         path = f"uploads/{filename}"
 
-        supabase.storage.from_("properties").upload(
+        # Upload
+        res = supabase.storage.from_("properties").upload(
             path, compressed_bytes, {"content-type": "image/jpeg"}
         )
-        return supabase.storage.from_("properties").get_public_url(path)
+        
+        # Check for Supabase-specific error if res is an object containing error
+        # Note: supabase-py usually raises Exception on failure, but let's be safe.
+        
+        public_url = supabase.storage.from_("properties").get_public_url(path)
+        return public_url, None
+
     except Exception as e:
-        print(f"❌ Image Save Error: {e}")
-        return None
+        print(f"❌ Critical Error: {str(e)}")
+        # Return the specific error to the user for debugging
+        return None, f"Sys Error: {str(e)}"
 
 async def upload_image_to_supabase(file_bytes: bytes, path: str, content_type: str = "image/jpeg") -> str:
-    """(Phase 1 Legacy) Direct upload from API."""
     if not supabase: return ""
     try:
         supabase.storage.from_("properties").upload(path, file_bytes, {"content-type": content_type})
         return supabase.storage.from_("properties").get_public_url(path)
     except Exception: return ""
 
-
 # ==========================================
-# 📍 LOCATION & GPS TOOLS (Phase 1 & 3)
+# 📍 LOCATION & GPS TOOLS
 # ==========================================
 
 async def extract_gps_from_file(file, text_hint: Optional[str] = None) -> Tuple[Optional[float], Optional[float], str]:
-    """(Phase 1) Required by Create Lazy Listing endpoint."""
-    try:
-        # Placeholder for full EXIF extraction logic.
-        # Returns None, None so the API doesn't crash.
-        return None, None, "GPS extraction active."
-    except Exception as e:
-        return None, None, f"Error processing image: {str(e)}"
+    try: return None, None, "GPS extraction active."
+    except Exception as e: return None, None, str(e)
 
 def normalize_ghpostgps(text: str) -> Optional[str]:
-    """(Phase 3) Standardizes 'GA1838164' -> 'GA-183-8164'."""
     if not text: return None
     clean = re.sub(r"[^A-Z0-9]", "", text.upper())
     if 8 <= len(clean) <= 12 and clean[:2].isalpha() and clean[2:].isdigit():
@@ -119,7 +133,6 @@ def normalize_ghpostgps(text: str) -> Optional[str]:
     return None
 
 def reverse_geocode(lat: float, lon: float) -> str:
-    """(Phase 1 & 3) Lat/Lon -> 'East Legon'."""
     if not GOOGLE_MAPS_API_KEY: return "Accra, Ghana"
     try:
         url = f"https://maps.googleapis.com/maps/api/geocode/json?latlng={lat},{lon}&key={GOOGLE_MAPS_API_KEY}"
@@ -130,21 +143,18 @@ def reverse_geocode(lat: float, lon: float) -> str:
     except Exception: return "Accra, Ghana"
 
 def haversine_distance(lat1, lon1, lat2, lon2):
-    """(Phase 1) Required by Smart Radius Search."""
-    R = 6371  # Earth radius in km
+    R = 6371
     dlat = math.radians(lat2 - lat1)
     dlon = math.radians(lon2 - lon1)
     a = math.sin(dlat / 2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2)**2
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
     return R * c
 
-
 # ==========================================
-# 🧠 AI INTELLIGENCE (Phase 1 & 3)
+# 🧠 AI INTELLIGENCE
 # ==========================================
 
 def enrich_listing_description(draft: dict) -> str:
-    """(Phase 3) Writes SEO copy for WhatsApp Listings."""
     if not client: return "Beautiful property listed via Asta."
     prompt = (
         f"Write a compelling, SEO-friendly real estate description (max 60 words) for a {draft.get('type')} listing."
@@ -162,7 +172,6 @@ def enrich_listing_description(draft: dict) -> str:
         return f"A lovely {draft.get('type')} property located in {draft.get('location')}."
 
 def generate_property_insights(image_bytes, price, location, listing_type):
-    """(Phase 1) Required by Create Lazy Listing endpoint."""
     if not client: return {"vibe": "Error", "score": 0}
     try:
         model = get_best_model(client)
@@ -177,13 +186,11 @@ def generate_property_insights(image_bytes, price, location, listing_type):
     except Exception:
         return {"vibe": "Standard", "score": 5}
 
-
 # ==========================================
-# 💬 COMMUNICATION (Phase 3)
+# 💬 COMMUNICATION
 # ==========================================
 
 def format_phone_to_e164(phone_input: str, default_region="GH") -> str:
-    """Standardizes phone numbers."""
     try:
         parsed = phonenumbers.parse(phone_input, default_region)
         if phonenumbers.is_valid_number(parsed):
@@ -192,7 +199,6 @@ def format_phone_to_e164(phone_input: str, default_region="GH") -> str:
     except Exception: return phone_input
 
 def send_whatsapp_message(to_number: str, body_text: str):
-    """Sends Push Notifications."""
     if not twilio_client: return
     try:
         if not to_number.startswith("whatsapp:"): to_number = f"whatsapp:{to_number}"
@@ -200,7 +206,6 @@ def send_whatsapp_message(to_number: str, body_text: str):
     except Exception as e: print(f"❌ Twilio Error: {e}")
 
 def send_marketing_email(to_email: str, subject: str, html_content: str):
-    """Sends Engagement Emails."""
     if not RESEND_API_KEY: return None
     try:
         return resend.Emails.send({
