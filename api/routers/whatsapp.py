@@ -11,27 +11,37 @@ router = APIRouter()
 
 # --- SESSION ---
 def get_session(phone: str):
-    res = supabase.table("whatsapp_sessions").select("*").eq("phone_number", phone).execute()
-    if res.data:
-        session = res.data[0]
-        last_update = datetime.fromisoformat(session["updated_at"].replace('Z', '+00:00'))
-        if datetime.now(timezone.utc) - last_update > timedelta(hours=24):
-            reset_session(phone)
-            return {"phone_number": phone, "current_step": "IDLE", "draft_data": {}}
-        return session
-    new_session = {"phone_number": phone, "current_step": "IDLE", "draft_data": {}}
-    supabase.table("whatsapp_sessions").insert(new_session).execute()
-    return new_session
+    try:
+        res = supabase.table("whatsapp_sessions").select("*").eq("phone_number", phone).execute()
+        if res.data:
+            session = res.data[0]
+            last_update = datetime.fromisoformat(session["updated_at"].replace('Z', '+00:00'))
+            if datetime.now(timezone.utc) - last_update > timedelta(hours=24):
+                reset_session(phone)
+                return {"phone_number": phone, "current_step": "IDLE", "draft_data": {}}
+            return session
+        new_session = {"phone_number": phone, "current_step": "IDLE", "draft_data": {}}
+        supabase.table("whatsapp_sessions").insert(new_session).execute()
+        return new_session
+    except Exception as e:
+        print(f"Session Error: {e}")
+        return {"phone_number": phone, "current_step": "IDLE", "draft_data": {}}
 
 def update_session(phone: str, step: str, data: dict):
-    supabase.table("whatsapp_sessions").update({
-        "current_step": step, "draft_data": data, "updated_at": "now()"
-    }).eq("phone_number", phone).execute()
+    try:
+        supabase.table("whatsapp_sessions").update({
+            "current_step": step, "draft_data": data, "updated_at": "now()"
+        }).eq("phone_number", phone).execute()
+    except Exception as e:
+        print(f"Update Session Failed: {e}")
 
 def reset_session(phone: str):
-    supabase.table("whatsapp_sessions").update({
-        "current_step": "IDLE", "draft_data": {}
-    }).eq("phone_number", phone).execute()
+    try:
+        supabase.table("whatsapp_sessions").update({
+            "current_step": "IDLE", "draft_data": {}
+        }).eq("phone_number", phone).execute()
+    except Exception as e:
+        print(f"Reset Session Failed: {e}")
 
 # --- BACKGROUND WORKER ---
 def final_publish_task(phone: str, draft: dict):
@@ -57,11 +67,15 @@ def final_publish_task(phone: str, draft: dict):
         
         if res.data:
             new_id = res.data[0]['id']
-            supabase.table("listing_images").insert({
-                "listing_id": new_id,
-                "image_url": draft.get("image_url"),
-                "is_hero": True
-            }).execute()
+            # Try to save image to gallery, but don't fail the whole publish if it breaks
+            try:
+                supabase.table("listing_images").insert({
+                    "listing_id": new_id,
+                    "image_url": draft.get("image_url"),
+                    "is_hero": True
+                }).execute()
+            except Exception as img_e:
+                print(f"Gallery Insert Error: {img_e}")
             
         live_url = "https://asta-insights.onrender.com/listings/" 
         msg = (
@@ -98,7 +112,6 @@ async def whatsapp_webhook(
     # COMMANDS
     if Body and Body.lower() in ["cancel", "reset", "stop"]:
         reset_session(phone)
-        # FIX: Better Reset UX
         msg.body("🔄 **Session Reset.**\n\nSend a **Photo** 📸 or say **'Hello'** to start fresh!")
         return Response(content=str(resp), media_type="application/xml")
 
@@ -107,7 +120,6 @@ async def whatsapp_webhook(
     if step == "IDLE":
         if NumMedia > 0:
             msg.body("📥 Saving cover image...")
-            # FIX: Capture the error message
             perm_url, error_msg = save_image_from_url(MediaUrl0, phone)
             
             if perm_url:
@@ -115,7 +127,6 @@ async def whatsapp_webhook(
                 msg.body("Stunning shot! 🤩 Is this for **Sale** or **Rent**?")
                 update_session(phone, "AWAITING_TYPE", draft)
             else:
-                # FIX: Show the user (and us) exactly why it failed
                 msg.body(f"😓 Save Failed.\nReason: {error_msg}\n\nPlease try sending the photo again.")
         elif Body:
             msg.body(
@@ -146,28 +157,40 @@ async def whatsapp_webhook(
             update_session(phone, "AWAITING_LOCATION", draft)
 
     elif step == "AWAITING_LOCATION":
+        loc_confirm = ""
+        
         if Latitude and Longitude:
             draft["location"] = f"GPS: {Latitude}, {Longitude}"
             draft["location_accuracy"] = "high"
-            msg.body("✅ **GPS Pin Received!**")
+            loc_confirm = "✅ **Location Set:** GPS Pin Received."
         elif Body:
             parsed = normalize_ghpostgps(Body.strip())
             if parsed:
                 draft["location"] = parsed
                 draft["location_accuracy"] = "medium"
-                msg.body(f"✅ **Digital Address:** {parsed}")
+                loc_confirm = f"✅ **Location Set:** {parsed}"
             else:
                 draft["location"] = Body.strip()
                 draft["location_accuracy"] = "low"
-                msg.body(f"✅ **Area:** {draft['location']} (General Area)")
+                loc_confirm = f"✅ **Location Set:** {draft['location']}\n(Mapped to General Area)"
         
-        msg.body("🛏️ **Key Details?** (e.g., 2 Bed, 2 Bath, AC)")
+        # UX Improvement: Clearer separation
+        response_text = (
+            f"{loc_confirm}\n\n"
+            "🛏️ **Next: Property Details**\n"
+            "List the basics (e.g., 2 Bed, 2 Bath, AC)"
+        )
+        msg.body(response_text)
         update_session(phone, "AWAITING_DETAILS", draft)
 
     elif step == "AWAITING_DETAILS":
         if Body:
             draft["details"] = Body.strip()
-            msg.body("🌟 **Sell the Vibe:**\nIn one sentence, **what makes this place special?**\n(e.g., 'Walking distance to mall')")
+            msg.body(
+                "🌟 **Sell the Vibe:**\n"
+                "In one sentence, **what makes this place special?**\n"
+                "(e.g., 'Walking distance to mall' or 'Quiet street')"
+            )
             update_session(phone, "AWAITING_VIBE", draft)
 
     elif step == "AWAITING_VIBE":
@@ -177,24 +200,29 @@ async def whatsapp_webhook(
             update_session(phone, "AWAITING_CONTACT", draft)
 
     elif step == "AWAITING_CONTACT":
-        if Body:
-            if "yes" in Body.lower():
-                contact = format_phone_to_e164(phone)
-            else:
-                contact = format_phone_to_e164(Body.strip())
-            
-            draft["contact"] = contact
-            
-            summary = (
-                f"📝 **Review:**\n"
-                f"🏠 {draft.get('type')}\n"
-                f"📍 {draft.get('location')}\n"
-                f"💰 {draft.get('price')}\n"
-                f"📞 {contact}\n\n"
-                f"Reply **YES** to publish!"
-            )
-            msg.body(summary)
-            update_session(phone, "CONFIRMATION", draft)
+        # CRASH PROTECTION: Wrap this block to catch errors
+        try:
+            if Body:
+                if "yes" in Body.lower():
+                    contact = format_phone_to_e164(phone)
+                else:
+                    contact = format_phone_to_e164(Body.strip())
+                
+                draft["contact"] = contact
+                
+                summary = (
+                    f"📝 **Review:**\n"
+                    f"�� {draft.get('type')}\n"
+                    f"📍 {draft.get('location')}\n"
+                    f"�� {draft.get('price')}\n"
+                    f"📞 {contact}\n\n"
+                    f"Reply **YES** to publish!"
+                )
+                msg.body(summary)
+                update_session(phone, "CONFIRMATION", draft)
+        except Exception as e:
+            print(f"Error in CONTACT step: {e}")
+            msg.body("😓 Oops! I had trouble reading that number. Please type the phone number again.")
 
     elif step == "CONFIRMATION":
         if Body and "yes" in Body.lower():
@@ -202,7 +230,7 @@ async def whatsapp_webhook(
             background_tasks.add_task(final_publish_task, From, draft)
             update_session(phone, "AWAITING_EMAIL", draft) 
         else:
-            msg.body("Reply **YES** to publish.")
+            msg.body("Draft saved. Reply **YES** to publish.")
 
     elif step == "AWAITING_EMAIL":
         if Body and "@" in Body:
