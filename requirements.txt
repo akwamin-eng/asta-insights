@@ -10,3 +10,4 @@ pillow
 pillow-heif
 phonenumbers
 python-multipart
+praw
