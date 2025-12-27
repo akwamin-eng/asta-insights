@@ -12,3 +12,4 @@ requests
 phonenumbers
 Pillow
 pillow-heif
+google-genai
