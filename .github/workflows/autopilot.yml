@@ -1,0 +1,63 @@
+name: Asta Autopilot
+
+on:
+  schedule:
+    - cron: '0 8 * * *'
+    - cron: '0 22 * * *'
+  workflow_dispatch:
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: 📥 Checkout Repository
+      uses: actions/checkout@v3
+
+    - name: 🐍 Set up Python 3.11
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        # Cache disabled to force fresh install
+        # cache: 'pip'
+
+    - name: 🧹 Nuclear Clean of Google Namespace
+      run: |
+        pip uninstall -y google-generativeai google-ai-generativelanguage google-api-core || true
+
+    - name: 📦 Install Dependencies (Fresh)
+      run: |
+        pip install --upgrade pip
+        pip install -r requirements.txt
+        # Verify the unified SDK is present
+        python -c "import google.genai; print('✅ SDK Installed Successfully')"
+
+    - name: 🧠 Run Market Enrichment
+      env:
+        PYTHONPATH: .
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+        GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+      run: |
+        python asta_run.py
+
+    - name: 🗣️ Run Social Listening
+      env:
+        PYTHONPATH: .
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+        REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
+        REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
+        REDDIT_USER_AGENT: ${{ secrets.REDDIT_USER_AGENT }}
+      run: |
+        python scripts/update_social_signals.py
+
+    - name: 📈 Run Predictive Pulse
+      env:
+        PYTHONPATH: .
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      run: |
+        python scripts/refresh_forecasts.py

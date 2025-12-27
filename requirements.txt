@@ -16,3 +16,4 @@ google-genai
 twilio
 pytz
 pydantic
+praw
