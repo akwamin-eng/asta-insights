@@ -8,5 +8,7 @@ httpx
 python-multipart
 jinja2
 resend
+requests
 phonenumbers
 Pillow
+pillow-heif
