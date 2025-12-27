@@ -13,3 +13,6 @@ phonenumbers
 Pillow
 pillow-heif
 google-genai
+twilio
+pytz
+pydantic
