@@ -28,12 +28,14 @@ def update_rates():
         print(f"✅ Rate Acquired: 1 USD = {ghs_rate} GHS")
         
         # 2. Update Supabase
-        # We store this in 'system_config' so the frontend/backend can read it anytime
         supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
         
+        # --- FIXED PAYLOAD STRUCTURE ---
+        # Key matches the SQL trigger ('usd_exchange_rate')
+        # Value is a JSON Object, not a string
         payload = {
-            "key": "ghs_usd_rate",
-            "value": str(ghs_rate), # Storing as string to preserve decimal precision if needed
+            "key": "usd_exchange_rate", 
+            "value": {"rate": ghs_rate, "source": "ExchangeRate-API"}, 
             "description": "Live USD to GHS exchange rate",
             "last_updated": "now()"
         }
@@ -49,4 +51,3 @@ def update_rates():
 
 if __name__ == "__main__":
     update_rates()
- # Force git registration
