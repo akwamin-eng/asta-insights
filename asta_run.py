@@ -1,30 +1,77 @@
 import os
 import sys
+import time
+import requests # New: Used to call the Edge Function
+import json
 
 def run_asta_pipeline():
-    print("🤖 Asta Autopilot: Starting Pipeline...")
+    print("🤖 Asta Autopilot: Starting Pipeline (Delegator Mode)...")
 
-    # 1. Verify Imports First (Fail Fast)
+    # 1. Check Environment Variables
+    SUPABASE_URL = os.getenv("SUPABASE_URL")
+    SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY") # Uses Admin key for backend ops
+
+    if not all([SUPABASE_URL, SUPABASE_KEY]):
+        print("❌ Error: Missing Supabase Credentials.")
+        print(f"   - SUPABASE_URL: {'Found' if SUPABASE_URL else 'Missing'}")
+        print(f"   - SUPABASE_KEY: {'Found' if SUPABASE_KEY else 'Missing'}")
+        sys.exit(1)
+
+    # 2. Configuration for Edge Function (The Central Brain)
+    FUNCTION_URL = f"{SUPABASE_URL}/functions/v1/enrich-news"
+    HEADERS = {
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type": "application/json"
+    }
+
+    # 3. Initialize Supabase Client (For fetching lists)
     try:
-        from google import genai
-        print("✅ Google GenAI SDK found.")
-    except ImportError as e:
-        print(f"❌ CRITICAL IMPORT ERROR: {e}")
-        # Debugging: Print where python is looking
-        print(f"Python Path: {sys.path}")
+        from supabase import create_client, Client
+        supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+        print("✅ Supabase Client loaded.")
+    except ImportError:
+        print("❌ Critical: 'supabase' library not found.")
         sys.exit(1)
 
-    # 2. Check Environment
-    if not os.getenv("GOOGLE_API_KEY"):
-        print("❌ Error: GOOGLE_API_KEY missing.")
-        sys.exit(1)
-
-    # 3. Import Logic (Lazy import to avoid crashes before checks)
-    from scripts.enricher import get_asta_insights
+    # 4. Run Analysis Logic
+    print("🔍 Checking for pending intelligence (Backlog)...")
     
-    print("🔍 Running Market Enrichment...")
-    # Add your actual loop logic here or call the function
-    # get_asta_insights(...)
+    # Fetch Pending News (Items that the Trigger might have missed)
+    response = supabase.table('market_news')\
+        .select("*")\
+        .eq('status', 'pending_enrichment')\
+        .limit(20)\
+        .execute()
+    
+    news_items = response.data
+    
+    if not news_items:
+        print("💤 No pending items found. System Clean.")
+        return
+
+    print(f"⚡ Delegating {len(news_items)} assets to Asta Brain (Edge Function)...")
+
+    for item in news_items:
+        try:
+            print(f"   ↳ Processing: {item.get('title', 'Unknown')[:40]}...")
+            
+            # We send the record to the Edge Function exactly as the DB Trigger would
+            payload = { "record": item }
+            
+            # Call the Central Brain
+            func_response = requests.post(FUNCTION_URL, headers=HEADERS, json=payload)
+            
+            if func_response.status_code == 200:
+                print("      ✅ Enriched via Edge!")
+            else:
+                print(f"      ⚠️ Edge Error: {func_response.text}")
+                # We do NOT mark as failed here; we let the next cron run retry it.
+            
+            # Polite Rate Limiting
+            time.sleep(1)
+
+        except Exception as e:
+            print(f"      ❌ Transmission Failed: {e}")
 
     print("✅ Pipeline Step Complete.")
 

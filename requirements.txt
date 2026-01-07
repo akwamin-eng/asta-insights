@@ -17,3 +17,7 @@ twilio
 pytz
 pydantic
 praw
+# Added for RSS Sentinel
+feedparser
+python-dateutil
+beautifulsoup4
