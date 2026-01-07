@@ -10,37 +10,42 @@ jobs:
   run-pipeline:
     runs-on: ubuntu-latest
 
+    # 👇 THIS IS THE CRITICAL FIX
+    # It makes all steps run inside your folder automatically.
+    defaults:
+      run:
+        working-directory: ./asta-web
+
     steps:
     - name: 📥 Checkout Repository
-      uses: actions/checkout@v4
-
-    - name: 🔍 DEBUG REMOTE FILE STRUCTURE
-      run: |
-        echo "Current Directory: $(pwd)"
-        echo "Listing all files in repository:"
-        find . -maxdepth 3 -not -path '*/.*'
+      uses: actions/checkout@v3
 
     - name: 🐍 Set up Python 3.11
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v4
       with:
         python-version: '3.11'
+        # cache: 'pip'
 
-    - name: 📦 Install Dependencies
+    - name: 🧹 Nuclear Clean of Google Namespace
+      run: |
+        pip uninstall -y google-generativeai google-ai-generativelanguage google-api-core || true
+
+    - name: 📦 Install Dependencies (Fresh)
       run: |
         pip install --upgrade pip
-        # We try to enter the directory first. If this fails, the folder is missing.
-        cd asta-web
+        # This will now work because we are defaulting to ./asta-web
         pip install -r requirements.txt
         python -c "import google.genai; print('✅ SDK Installed Successfully')"
 
+    # 👇 RE-ADDED MISSING CURRENCY STEP
     - name: 💱 Update Exchange Rates
       env:
         PYTHONPATH: .
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
         SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        # Hardcoded key as per your previous file, though Secrets are safer!
         EXCHANGE_RATE_API_KEY: 05951d1e4b50bce1dd0b51cc
       run: |
-        cd asta-web
         python scripts/update_currency.py
 
     - name: 🧠 Run Market Enrichment
@@ -51,7 +56,6 @@ jobs:
         GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
         GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
       run: |
-        cd asta-web
         python asta_run.py
 
     - name: 🗣️ Run Social Listening
@@ -64,7 +68,6 @@ jobs:
         REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
         REDDIT_USER_AGENT: ${{ secrets.REDDIT_USER_AGENT }}
       run: |
-        cd asta-web
         python scripts/update_social_signals.py
 
     - name: 📈 Run Predictive Pulse
@@ -73,5 +76,4 @@ jobs:
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
         SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       run: |
-        cd asta-web
         python scripts/refresh_forecasts.py
