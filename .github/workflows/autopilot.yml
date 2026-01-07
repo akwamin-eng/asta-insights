@@ -32,6 +32,15 @@ jobs:
         # Verify the unified SDK is present
         python -c "import google.genai; print('✅ SDK Installed Successfully')"
 
+    - name: 💱 Update Exchange Rates
+      env:
+        PYTHONPATH: .
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        EXCHANGE_RATE_API_KEY: 05951d1e4b50bce1dd0b51cc
+      run: |
+        python scripts/update_currency.py
+
     - name: 🧠 Run Market Enrichment
       env:
         PYTHONPATH: .
