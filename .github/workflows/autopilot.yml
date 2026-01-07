@@ -9,31 +9,27 @@ on:
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
-    
-    # 👇 KEY FIX: This sets the context for all steps below to the subdirectory
-    defaults:
-      run:
-        working-directory: ./asta-web
 
     steps:
     - name: 📥 Checkout Repository
       uses: actions/checkout@v4
-      # Checkout happens at root, before the working-directory default kicks in for 'run' steps
+
+    - name: 🔍 DEBUG REMOTE FILE STRUCTURE
+      run: |
+        echo "Current Directory: $(pwd)"
+        echo "Listing all files in repository:"
+        find . -maxdepth 3 -not -path '*/.*'
 
     - name: 🐍 Set up Python 3.11
       uses: actions/setup-python@v5
       with:
         python-version: '3.11'
-        # cache: 'pip' # Cache disabled as requested
 
-    - name: 🧹 Nuclear Clean of Google Namespace
-      run: |
-        pip uninstall -y google-generativeai google-ai-generativelanguage google-api-core || true
-
-    - name: 📦 Install Dependencies (Fresh)
+    - name: 📦 Install Dependencies
       run: |
         pip install --upgrade pip
-        # This will now look for requirements.txt inside ./asta-web/
+        # We try to enter the directory first. If this fails, the folder is missing.
+        cd asta-web
         pip install -r requirements.txt
         python -c "import google.genai; print('✅ SDK Installed Successfully')"
 
@@ -44,7 +40,7 @@ jobs:
         SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         EXCHANGE_RATE_API_KEY: 05951d1e4b50bce1dd0b51cc
       run: |
-        # Since we are inside ./asta-web, this path is valid
+        cd asta-web
         python scripts/update_currency.py
 
     - name: 🧠 Run Market Enrichment
@@ -55,6 +51,7 @@ jobs:
         GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
         GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
       run: |
+        cd asta-web
         python asta_run.py
 
     - name: 🗣️ Run Social Listening
@@ -67,6 +64,7 @@ jobs:
         REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
         REDDIT_USER_AGENT: ${{ secrets.REDDIT_USER_AGENT }}
       run: |
+        cd asta-web
         python scripts/update_social_signals.py
 
     - name: 📈 Run Predictive Pulse
@@ -75,4 +73,5 @@ jobs:
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
         SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       run: |
+        cd asta-web
         python scripts/refresh_forecasts.py
