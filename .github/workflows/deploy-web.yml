@@ -38,10 +38,11 @@ jobs:
 
     - name: Build and Push
       run: |-
-        # HERE IS THE MAGIC: We pass the secrets into the build process
         docker build \
           --build-arg VITE_SUPABASE_URL="${{ secrets.SUPABASE_URL }}" \
           --build-arg VITE_SUPABASE_ANON_KEY="${{ secrets.SUPABASE_KEY }}" \
+          --build-arg VITE_MAPBOX_TOKEN="${{ secrets.MAPBOX_TOKEN }}" \
+          --build-arg VITE_GOOGLE_MAPS_API_KEY="${{ secrets.GOOGLE_MAPS_API_KEY }}" \
           -t "${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${SERVICE_NAME}:${{ github.sha }}" \
           -f ./asta-web/Dockerfile \
           ./asta-web

@@ -2,15 +2,19 @@
 FROM node:20-alpine AS build
 WORKDIR /app
 
-# 1. Declare that we expect these arguments from GitHub Actions
+# ARGUMENTS (Secrets passed from GitHub)
 ARG VITE_SUPABASE_URL
 ARG VITE_SUPABASE_ANON_KEY
+ARG VITE_MAPBOX_TOKEN
+ARG VITE_GOOGLE_MAPS_API_KEY
 
-# 2. Set them as Environment Variables so Vite can see them during build
+# ENVIRONMENT (Made available to Vite)
 ENV VITE_SUPABASE_URL=$VITE_SUPABASE_URL
 ENV VITE_SUPABASE_ANON_KEY=$VITE_SUPABASE_ANON_KEY
+ENV VITE_MAPBOX_TOKEN=$VITE_MAPBOX_TOKEN
+ENV VITE_GOOGLE_MAPS_API_KEY=$VITE_GOOGLE_MAPS_API_KEY
 
-# Copy package files (Using wildcard for safety)
+# Copy package files
 COPY package*.json ./
 
 # Install dependencies
@@ -19,7 +23,7 @@ RUN npm install --legacy-peer-deps
 # Copy source code
 COPY . .
 
-# Build (Vite will now bake the keys into the JS)
+# Build
 RUN npm run build
 
 # STAGE 2: Serve
