@@ -1,3 +1,4 @@
+import { API_BASE_URL } from "../../../lib/api";
 import React, { useState, useEffect } from 'react';
 import { ShieldCheck, AlertTriangle, Siren, Loader2 } from 'lucide-react';
 
@@ -37,7 +38,7 @@ export default function IntelligenceCard({ propertyId, locationName }: Intellige
     
     try {
       // API Call
-      const response = await fetch('http://127.0.0.1:8000/api/feedback', {
+      const response = await fetch(`${API_BASE_URL}/api/feedback`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

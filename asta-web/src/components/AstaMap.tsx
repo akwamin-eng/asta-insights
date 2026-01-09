@@ -1,3 +1,4 @@
+import { API_BASE_URL } from "../lib/api";
 import React, {
   useState,
   useEffect,
@@ -253,7 +254,7 @@ interface Suggestion {
 }
 
 const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN;
-const ENGINE_URL = "http://127.0.0.1:8000";
+const ENGINE_URL = API_BASE_URL;
 const INITIAL_VIEW_STATE = { longitude: -0.187, latitude: 5.6037, zoom: 11 };
 const GHANA_BOUNDS: [number, number, number, number] = [-3.5, 4.5, 1.5, 11.5];
 
