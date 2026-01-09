@@ -2,11 +2,13 @@
 FROM node:20-alpine AS build
 WORKDIR /app
 
-# COPY simple paths (relative to asta-web folder)
-COPY package.json package-lock.json ./
+# COPY using a wildcard (*)
+# This is the magic fix: It copies package.json AND package-lock.json if it exists,
+# but it won't crash if the lockfile is missing.
+COPY package*.json ./
 
-# Clean Install (Faster & Safer)
-RUN npm ci --legacy-peer-deps
+# Switch back to 'npm install' because 'npm ci' requires a lockfile
+RUN npm install --legacy-peer-deps
 
 # Copy the rest of the web folder
 COPY . .
