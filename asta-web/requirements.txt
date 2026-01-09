@@ -1,0 +1,23 @@
+fastapi
+uvicorn
+supabase
+python-dotenv
+pandas
+numpy
+httpx
+python-multipart
+jinja2
+resend
+requests
+phonenumbers
+Pillow
+pillow-heif
+google-genai
+twilio
+pytz
+pydantic
+praw
+# Added for RSS Sentinel
+feedparser
+python-dateutil
+beautifulsoup4

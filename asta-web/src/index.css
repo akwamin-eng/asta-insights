@@ -1,0 +1,83 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* 🟢 ASTA PREMIUM UI IDENTITY 
+   Optimized for Performance (Mobile/Low Bandwidth)
+*/
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    background-color: #050505; /* Deep Space Black */
+    color: #e5e7eb; /* Standard Gray-200 */
+    overflow: hidden; /* Prevent body scroll, handle internally */
+  }
+}
+
+@layer utilities {
+  /* --- ASTA GLASS ---
+     Mobile Optimized: Uses high opacity background instead of 
+     heavy backdrop-filter blur to save battery/GPU.
+  */
+  .asta-glass {
+    @apply bg-[#050505]/95 border border-white/10 backdrop-blur-sm shadow-xl;
+  }
+
+  /* --- TACTICAL PANEL ---
+     Solid background for high contrast data reading
+  */
+  .asta-panel {
+    @apply bg-[#0A0A0A] border border-white/10 shadow-2xl;
+  }
+
+  /* --- CINEMATIC MAP VIGNETTE ---
+     Creates focus by darkening edges of the screen.
+     Uses CSS gradient (GPU efficient) vs Image.
+  */
+  .map-vignette {
+    position: fixed;
+    pointer-events: none;
+    inset: 0;
+    z-index: 10;
+    background: radial-gradient(
+      circle at center,
+      transparent 50%,
+      rgba(5, 5, 5, 0.6) 100%
+    );
+  }
+
+  /* --- TACTICAL GRID ---
+      subtle sci-fi grid background
+  */
+  .tactical-grid {
+    background-size: 40px 40px;
+    background-image: linear-gradient(
+        to right,
+        rgba(255, 255, 255, 0.03) 1px,
+        transparent 1px
+      ),
+      linear-gradient(to bottom, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+  }
+
+  /* --- SCROLLBAR CUSTOMIZATION --- */
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.02);
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 2px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: rgba(16, 185, 129, 0.5); /* Emerald Hover */
+  }
+}
