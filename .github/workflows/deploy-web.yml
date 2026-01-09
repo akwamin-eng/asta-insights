@@ -2,7 +2,7 @@ name: Deploy Asta Web
 
 on:
   push:
-    branches: ["main"]
+    branches: [ "main" ]
     paths:
       - "asta-web/**"
       - ".github/workflows/deploy-web.yml"
@@ -17,40 +17,41 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     permissions:
-      contents: "read"
-      id-token: "write"
+      contents: 'read'
+      id-token: 'write'
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+    - name: Checkout
+      uses: actions/checkout@v4
 
-      - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: projects/1074257837836/locations/global/workloadIdentityPools/github-pool/providers/github-provider
-          service_account: asta-deployer@asta-homes-dev-483421.iam.gserviceaccount.com
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@v2
+      with:
+        workload_identity_provider: projects/1074257837836/locations/global/workloadIdentityPools/github-pool/providers/github-provider
+        service_account: asta-deployer@asta-homes-dev-483421.iam.gserviceaccount.com
 
-      - name: Set up Cloud SDK
-        uses: google-github-actions/setup-gcloud@v2
+    - name: Set up Cloud SDK
+      uses: google-github-actions/setup-gcloud@v2
 
-      - name: Configure Docker
-        run: gcloud auth configure-docker ${REGION}-docker.pkg.dev --quiet
+    - name: Configure Docker
+      run: gcloud auth configure-docker ${REGION}-docker.pkg.dev --quiet
 
-      - name: Build and Push
-        run: |-
-          # CONTEXT is ./asta-web
-          # DOCKERFILE is ./asta-web/Dockerfile
-          docker build \
-            -t "${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${SERVICE_NAME}:${{ github.sha }}" \
-            -f ./asta-web/Dockerfile \
-            ./asta-web
-            
-          docker push "${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${SERVICE_NAME}:${{ github.sha }}"
+    - name: Build and Push
+      run: |-
+        # HERE IS THE MAGIC: We pass the secrets into the build process
+        docker build \
+          --build-arg VITE_SUPABASE_URL="${{ secrets.SUPABASE_URL }}" \
+          --build-arg VITE_SUPABASE_ANON_KEY="${{ secrets.SUPABASE_KEY }}" \
+          -t "${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${SERVICE_NAME}:${{ github.sha }}" \
+          -f ./asta-web/Dockerfile \
+          ./asta-web
+          
+        docker push "${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${SERVICE_NAME}:${{ github.sha }}"
 
-      - name: Deploy to Cloud Run
-        uses: google-github-actions/deploy-cloudrun@v2
-        with:
-          service: ${{ env.SERVICE_NAME }}
-          region: ${{ env.REGION }}
-          image: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.SERVICE_NAME }}:${{ github.sha }}
-          flags: "--allow-unauthenticated"
+    - name: Deploy to Cloud Run
+      uses: google-github-actions/deploy-cloudrun@v2
+      with:
+        service: ${{ env.SERVICE_NAME }}
+        region: ${{ env.REGION }}
+        image: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.SERVICE_NAME }}:${{ github.sha }}
+        flags: '--allow-unauthenticated'

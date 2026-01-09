@@ -2,18 +2,24 @@
 FROM node:20-alpine AS build
 WORKDIR /app
 
-# COPY using a wildcard (*)
-# This is the magic fix: It copies package.json AND package-lock.json if it exists,
-# but it won't crash if the lockfile is missing.
+# 1. Declare that we expect these arguments from GitHub Actions
+ARG VITE_SUPABASE_URL
+ARG VITE_SUPABASE_ANON_KEY
+
+# 2. Set them as Environment Variables so Vite can see them during build
+ENV VITE_SUPABASE_URL=$VITE_SUPABASE_URL
+ENV VITE_SUPABASE_ANON_KEY=$VITE_SUPABASE_ANON_KEY
+
+# Copy package files (Using wildcard for safety)
 COPY package*.json ./
 
-# Switch back to 'npm install' because 'npm ci' requires a lockfile
+# Install dependencies
 RUN npm install --legacy-peer-deps
 
-# Copy the rest of the web folder
+# Copy source code
 COPY . .
 
-# Build
+# Build (Vite will now bake the keys into the JS)
 RUN npm run build
 
 # STAGE 2: Serve
