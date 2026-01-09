@@ -35,15 +35,21 @@ jobs:
       - name: Configure Docker for Artifact Registry
         run: gcloud auth configure-docker ${REGION}-docker.pkg.dev --quiet
 
+      # Note: Shell commands can use $VAR syntax
       - name: Build and Push Engine Image
         run: |
           docker build -t "${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${SERVICE_NAME}:${{ github.sha }}" ./asta-engine
           docker push "${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${SERVICE_NAME}:${{ github.sha }}"
 
+      # FIXED: Uses ${{ env.VAR }} syntax for inputs and injects secrets
       - name: Deploy to Cloud Run
         uses: google-github-actions/deploy-cloudrun@v2
         with:
           service: ${{ env.SERVICE_NAME }}
           region: ${{ env.REGION }}
-          image: "${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${SERVICE_NAME}:${{ github.sha }}"
+          image: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.SERVICE_NAME }}:${{ github.sha }}
           flags: "--allow-unauthenticated"
+          env_vars: |
+            SUPABASE_URL=${{ secrets.SUPABASE_URL }}
+            SUPABASE_KEY=${{ secrets.SUPABASE_KEY }}
+            GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
