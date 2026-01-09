@@ -2,11 +2,11 @@
 FROM node:20 AS build
 WORKDIR /app
 
-# Only copy files needed for install first
+# The path needs to be relative to the context (the folder being sent to Docker)
 COPY package*.json ./
-RUN npm install --network-timeout=100000
+RUN npm install
 
-# Copy the rest
+# Copy everything from the current directory (asta-web) to the container
 COPY . .
 RUN npm run build
 
