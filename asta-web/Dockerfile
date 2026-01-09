@@ -2,13 +2,11 @@
 FROM node:20-alpine AS build
 WORKDIR /app
 
-# In this context, package.json is in the root of 'asta-web'
-COPY package.json package-lock.json* ./
-
-# Install dependencies (Alpine is faster and uses less memory)
-RUN npm install --network-timeout=100000 --legacy-peer-deps
-
+# Copy everything from the current context
 COPY . .
+
+# Install and Build
+RUN npm install --legacy-peer-deps
 RUN npm run build
 
 # STAGE 2: Serve
