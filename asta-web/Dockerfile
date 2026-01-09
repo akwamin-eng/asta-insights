@@ -1,12 +1,13 @@
 # STAGE 1: Build
-FROM node:20 AS build
+FROM node:20-alpine AS build
 WORKDIR /app
 
-# The path needs to be relative to the context (the folder being sent to Docker)
-COPY package*.json ./
-RUN npm install
+# In this context, package.json is in the root of 'asta-web'
+COPY package.json package-lock.json* ./
 
-# Copy everything from the current directory (asta-web) to the container
+# Install dependencies (Alpine is faster and uses less memory)
+RUN npm install --network-timeout=100000 --legacy-peer-deps
+
 COPY . .
 RUN npm run build
 

@@ -36,7 +36,10 @@ jobs:
 
       - name: "Build and Push"
         run: |-
-          docker build -t "us-central1-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.SERVICE_NAME }}:${{ github.sha }}" ./asta-web
+          docker build \
+            -t "us-central1-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.SERVICE_NAME }}:${{ github.sha }}" \
+            -f ./asta-web/Dockerfile \
+            ./asta-web
           docker push "us-central1-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.SERVICE_NAME }}:${{ github.sha }}"
 
       - name: "Deploy to Cloud Run"
