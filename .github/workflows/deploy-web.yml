@@ -4,7 +4,7 @@ on:
   push:
     branches: ["main"]
     paths:
-      - "asta-web/**"
+      - "asta-web/**" # Only trigger when web files change
 
 env:
   PROJECT_ID: asta-homes-dev-483421
@@ -32,15 +32,18 @@ jobs:
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Configure Docker for Artifact Registry
+      - name: Configure Docker
         run: gcloud auth configure-docker ${REGION}-docker.pkg.dev --quiet
 
-      - name: Build and Push Web Image
-        run: |
+      - name: Build and Push
+        run: |-
+          # We explicitly set the context to ./asta-web (the last argument)
+          # This makes COPY package.json work because it's at the root of that folder.
           docker build \
             -t "${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${SERVICE_NAME}:${{ github.sha }}" \
             -f ./asta-web/Dockerfile \
             ./asta-web
+            
           docker push "${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${SERVICE_NAME}:${{ github.sha }}"
 
       - name: Deploy to Cloud Run
@@ -48,5 +51,5 @@ jobs:
         with:
           service: ${{ env.SERVICE_NAME }}
           region: ${{ env.REGION }}
-          image: "${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${SERVICE_NAME}:${{ github.sha }}"
+          image: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.SERVICE_NAME }}:${{ github.sha }}
           flags: "--allow-unauthenticated"
