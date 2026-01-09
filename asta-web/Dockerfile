@@ -2,14 +2,14 @@
 FROM node:20-alpine AS build
 WORKDIR /app
 
-# COPY from the root context (asta-web/package.json) to the container
-COPY asta-web/package.json asta-web/package-lock.json ./
+# COPY simple paths (relative to asta-web folder)
+COPY package.json package-lock.json ./
 
-# Install dependencies (Clean Install)
+# Clean Install (Faster & Safer)
 RUN npm ci --legacy-peer-deps
 
 # Copy the rest of the web folder
-COPY asta-web/ .
+COPY . .
 
 # Build
 RUN npm run build
