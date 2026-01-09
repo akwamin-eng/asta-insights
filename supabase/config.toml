@@ -413,3 +413,25 @@ entrypoint = "./functions/exchange-magic-token/index.ts"
 # Specifies static files to be bundled with the function. Supports glob patterns.
 # For example, if you want to serve static HTML pages in your function:
 # static_files = [ "./functions/exchange-magic-token/*.html" ]
+
+[functions.ask-oracle]
+enabled = true
+verify_jwt = true
+import_map = "./functions/ask-oracle/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/ask-oracle/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/ask-oracle/*.html" ]
+
+[functions.enrich-news]
+enabled = true
+verify_jwt = true
+import_map = "./functions/enrich-news/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/enrich-news/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/enrich-news/*.html" ]

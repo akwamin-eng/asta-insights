@@ -3,3 +3,6 @@ ai-env/
 __pycache__/
 *.json
 .DS_Store
+.vercel
+.env*.local
+.venv
