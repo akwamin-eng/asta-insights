@@ -2,11 +2,16 @@
 FROM node:20-alpine AS build
 WORKDIR /app
 
-# Copy everything from the current context
+# Copy the package files first (better for caching)
+COPY package*.json ./
+
+# Install dependencies
+RUN npm install --legacy-peer-deps
+
+# Copy everything else from the asta-web directory
 COPY . .
 
-# Install and Build
-RUN npm install --legacy-peer-deps
+# Run build
 RUN npm run build
 
 # STAGE 2: Serve
