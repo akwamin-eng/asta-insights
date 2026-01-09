@@ -23,26 +23,27 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - id: "auth"
-        uses: "google-github-actions/auth@v2"
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: "projects/1074257837836/locations/global/workloadIdentityPools/github-pool/providers/github-provider"
+          workload_identity_provider: projects/1074257837836/locations/global/workloadIdentityPools/github-pool/providers/github-provider
+          service_account: asta-deployer@asta-homes-dev-483421.iam.gserviceaccount.com
 
-      - name: "Set up Cloud SDK"
-        uses: "google-github-actions/setup-gcloud@v2"
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
 
-      - name: "Docker Auth"
-        run: gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${REGION}-docker.pkg.dev --quiet
 
-      - name: "Build and Push"
-        run: |-
-          docker build -t "us-central1-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.SERVICE_NAME }}:${{ github.sha }}" ./asta-engine
-          docker push "us-central1-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.SERVICE_NAME }}:${{ github.sha }}"
+      - name: Build and Push Engine Image
+        run: |
+          docker build -t "${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${SERVICE_NAME}:${{ github.sha }}" ./asta-engine
+          docker push "${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${SERVICE_NAME}:${{ github.sha }}"
 
-      - name: "Deploy to Cloud Run"
-        uses: "google-github-actions/deploy-cloudrun@v2"
+      - name: Deploy to Cloud Run
+        uses: google-github-actions/deploy-cloudrun@v2
         with:
           service: ${{ env.SERVICE_NAME }}
           region: ${{ env.REGION }}
-          image: "us-central1-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.SERVICE_NAME }}:${{ github.sha }}"
+          image: "${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${SERVICE_NAME}:${{ github.sha }}"
           flags: "--allow-unauthenticated"
