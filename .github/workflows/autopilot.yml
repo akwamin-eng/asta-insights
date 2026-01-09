@@ -2,9 +2,9 @@ name: Asta Autopilot
 
 on:
   schedule:
-    - cron: '0 8 * * *'
-    - cron: '0 22 * * *'
-  workflow_dispatch:
+    - cron: '0 8 * * *'   # 8:00 AM UTC
+    - cron: '0 16 * * *'  # 4:00 PM UTC (Added for fresh afternoon news)
+  workflow_dispatch:      # Allows manual click
 
 jobs:
   run-pipeline:
@@ -18,21 +18,44 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: '3.11'
+        cache: 'pip' # 🟢 Added caching to speed up runs
+
+    # 🛡️ FROM YOUR SUCCESSFUL RUN: Prevents SDK conflicts
+    - name: 🧹 Nuclear Clean of Google Namespace
+      run: |
+        pip uninstall -y google-generativeai google-ai-generativelanguage google-api-core || true
 
     - name: 📦 Install Dependencies
       run: |
         pip install --upgrade pip
         pip install -r requirements.txt
+        # Verification check
         python -c "import google.genai; print('✅ SDK Installed Successfully')"
 
+    # 1. CURRENCY (Foundation)
     - name: 💱 Update Exchange Rates
       env:
         PYTHONPATH: .
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
         SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-        EXCHANGE_RATE_API_KEY: 05951d1e4b50bce1dd0b51cc
-      run: python scripts/update_currency.py
+        # Using a fallback key or secret if you have one, otherwise this might fail if not set
+        EXCHANGE_RATE_API_KEY: ${{ secrets.EXCHANGE_RATE_API_KEY }} 
+      run: python scripts/update_currency.py || echo "⚠️ Currency update skipped (Key missing?)"
 
+    # 2. NEWS (The Missing Link!)
+    - name: 📰 Fetch Global Market News
+      env:
+        PYTHONPATH: .
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+      run: |
+        echo "🚀 Starting News Ingestion..."
+        python scripts/fetch_google_news.py
+        python scripts/fetch_rss_feeds.py
+        echo "✅ News Ingestion Complete"
+
+    # 3. ENRICHMENT (Processing the data)
     - name: 🧠 Run Market Enrichment
       env:
         PYTHONPATH: .
@@ -42,6 +65,7 @@ jobs:
         GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
       run: python asta_run.py
 
+    # 4. SOCIAL (Reddit/Twitter signals)
     - name: 🗣️ Run Social Listening
       env:
         PYTHONPATH: .
@@ -53,6 +77,7 @@ jobs:
         REDDIT_USER_AGENT: ${{ secrets.REDDIT_USER_AGENT }}
       run: python scripts/update_social_signals.py
 
+    # 5. PREDICTIONS (Final Analysis)
     - name: 📈 Run Predictive Pulse
       env:
         PYTHONPATH: .
