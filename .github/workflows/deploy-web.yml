@@ -4,7 +4,8 @@ on:
   push:
     branches: ["main"]
     paths:
-      - "asta-web/**" # Only trigger when web files change
+      - "asta-web/**"
+      - ".github/workflows/deploy-web.yml"
 
 env:
   PROJECT_ID: asta-homes-dev-483421
@@ -35,14 +36,17 @@ jobs:
       - name: Configure Docker
         run: gcloud auth configure-docker ${REGION}-docker.pkg.dev --quiet
 
+      - name: Debug File Structure
+        run: ls -R
+
       - name: Build and Push
         run: |-
-          # We explicitly set the context to ./asta-web (the last argument)
-          # This makes COPY package.json work because it's at the root of that folder.
+          # CONTEXT IS ROOT (.)
+          # FILE IS ./asta-web/Dockerfile
           docker build \
             -t "${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${SERVICE_NAME}:${{ github.sha }}" \
             -f ./asta-web/Dockerfile \
-            ./asta-web
+            .
             
           docker push "${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${SERVICE_NAME}:${{ github.sha }}"
 
