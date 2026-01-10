@@ -4,7 +4,6 @@ from supabase import create_client, Client
 from dateutil import parser
 import datetime
 
-# 1. Setup Supabase
 url = os.environ.get("SUPABASE_URL")
 key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
 
@@ -14,23 +13,19 @@ if not url or not key:
 
 supabase: Client = create_client(url, key)
 
-# 2. Define Google News RSS URL (Split into multiple lines to avoid copy-paste truncation)
-base_url = "https://news.google.com/rss/search"
+base = "https://news.google.com/rss/search"
 query = "q=Real+Estate+Ghana+Accra+market+OR+housing+OR+construction"
 params = "&hl=en-GH&gl=GH&ceid=GH:en"
-rss_url = f"{base_url}?{query}{params}"
+rss_url = f"{base}?{query}{params}"
 
 print(f"📡 Fetching news from: {rss_url}")
 feed = feedparser.parse(rss_url)
 
 print(f"🔍 Found {len(feed.entries)} articles.")
 
-# 3. Process and Save
 new_articles = []
 for entry in feed.entries:
-    # Basic cleaning
     published_at = parser.parse(entry.published).isoformat()
-    
     article = {
         "title": entry.title,
         "url": entry.link,
