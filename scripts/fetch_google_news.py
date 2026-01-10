@@ -13,6 +13,7 @@ if not url or not key:
 
 supabase: Client = create_client(url, key)
 
+# Securely constructed URL
 base = "https://news.google.com/rss/search"
 query = "q=Real+Estate+Ghana+Accra+market+OR+housing+OR+construction"
 params = "&hl=en-GH&gl=GH&ceid=GH:en"
@@ -29,7 +30,7 @@ for entry in feed.entries:
     article = {
         "title": entry.title,
         "url": entry.link,
-        "source": entry.source.title if 'source' in entry else "Google News",
+        "source": entry.source.title if "source" in entry else "Google News",
         "published_at": published_at,
         "category": "Real Estate",
         "status": "pending_analysis"
