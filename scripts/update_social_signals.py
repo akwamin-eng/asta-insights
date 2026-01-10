@@ -28,7 +28,7 @@ keywords = [
     "buy", "selling", "scam", "agent"
 ]
 
-print("🎙️  Listening to the Streets (Reddit RSS)...")
+print("🎙️ Listening to the Streets (Reddit RSS)...")
 
 new_signals = []
 
@@ -54,8 +54,8 @@ for rss_url in rss_urls:
                     "source_id": entry.id,          # DB Column: source_id
                     "content": entry.title,         # DB Column: content
                     "url": entry.link,              # DB Column: url
-                    "sentiment_score": 0,           # DB Column: sentiment_score (numeric)
-                    "topics": ["Housing"],          # DB Column: topics (ARRAY)
+                    "sentiment_score": 0,           # DB Column: sentiment_score
+                    "topics": ["Housing"],          # DB Column: topics
                     "status": "pending_analysis"    # DB Column: status
                 }
                 new_signals.append(signal)
