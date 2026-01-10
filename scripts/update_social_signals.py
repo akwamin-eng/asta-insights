@@ -20,10 +20,12 @@ rss_urls = [
     "https://www.reddit.com/r/Accra/new/.rss"
 ]
 
+# 3. Keywords to Listen For
 keywords = [
     "rent", "land", "house", "apartment", "build", "cement", 
     "landlord", "tenant", "osu", "east legon", "cantonments", 
-    "airport", "kasoa", "tema", "real estate", "airbnb", "hotel"
+    "airport", "kasoa", "tema", "real estate", "airbnb", "hotel",
+    "buy", "selling", "scam", "agent"
 ]
 
 print("🎙️  Listening to the Streets (Reddit RSS)...")
@@ -39,29 +41,29 @@ for rss_url in rss_urls:
         print(f"      ↳ Found {len(feed.entries)} recent posts.")
         
         for entry in feed.entries:
+            # Combine title + summary for better keyword matching
             content = entry.title + " " + entry.get("summary", "")
             content_lower = content.lower()
             
             if any(word in content_lower for word in keywords):
-                print(f"      💡 Insight Found: {entry.title[:30]}...")
+                print(f"      💡 Insight Found: {entry.title[:40]}...")
                 
-                # MAPPING TO YOUR EXACT SCHEMA
+                # MAPPING TO YOUR EXACT DB SCHEMA
                 signal = {
-                    "platform": "Reddit",           # Schema: platform
-                    "source_id": entry.id,
-                    "content": entry.title,
-                    "url": entry.link,
-                    "sentiment_score": 0,           # Schema: numeric (Default neutral)
-                    "topics": ["Housing"],          # Schema: ARRAY (List of strings)
-                    "created_at": parser.parse(entry.published).isoformat(),
-                    "status": "pending_analysis"
+                    "platform": "Reddit",           # DB Column: platform
+                    "source_id": entry.id,          # DB Column: source_id
+                    "content": entry.title,         # DB Column: content
+                    "url": entry.link,              # DB Column: url
+                    "sentiment_score": 0,           # DB Column: sentiment_score (numeric)
+                    "topics": ["Housing"],          # DB Column: topics (ARRAY)
+                    "status": "pending_analysis"    # DB Column: status
                 }
                 new_signals.append(signal)
                 
     except Exception as e:
         print(f"   ⚠️ Error scanning {rss_url}: {e}")
 
-# 3. Save to Database
+# 4. Save to Database
 if new_signals:
     try:
         # Upsert based on URL to avoid duplicates
