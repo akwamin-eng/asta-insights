@@ -32,7 +32,8 @@ origins = [
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # Temporarily allow all to rule out CORS issues
+    allow_origins=[
+    "https://dev.asta.homes","*"], # Temporarily allow all to rule out CORS issues
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
