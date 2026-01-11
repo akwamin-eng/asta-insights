@@ -14,7 +14,14 @@ import {
   User,
   Phone,
   Sparkles,
-  Loader2
+  Loader2,
+  Map as MapIcon, 
+  FileCheck,
+  ExternalLink, 
+  HelpCircle,
+  Bed,
+  Bath,
+  Square
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { supabase } from '../lib/supabase';
@@ -29,10 +36,25 @@ import TrustScorecard from "./intel/TrustScorecard";
 import MarketPulse from "./intel/MarketPulse";
 import TrueCostCalculator from "./intel/TrueCostCalculator";
 
+// Land Intelligence Modules
+import DevelopmentCostCalculator from "./intel/DevelopmentCostCalculator";
+import GridConnectionCard from "./intel/GridConnectionCard";
+
 import { useLeadRouter } from '../hooks/useLeadRouter';
 
+// Reusable Tooltip Component
+const SimpleTooltip = ({ text }: { text: string }) => (
+  <div className="group relative inline-block ml-1 align-middle">
+    <HelpCircle size={10} className="text-gray-500 cursor-help hover:text-emerald-400 transition-colors" />
+    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 p-2 bg-black/95 border border-white/10 rounded-lg text-[10px] text-gray-300 leading-snug opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 text-center shadow-xl">
+      {text}
+      <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-black/95" />
+    </div>
+  </div>
+);
+
 interface PropertyInspectorProps {
-  property: any;
+  property: any; // Starts as "Lean" data, upgrades to "Full"
   onClose: () => void;
   onVerify?: () => void;
 }
@@ -42,28 +64,60 @@ export default function PropertyInspector({
   onClose,
   onVerify,
 }: PropertyInspectorProps) {
-  // --- UI STATE ---
+  // --- STATE MANAGEMENT ---
+  // 🟢 1. Initialize with the "Lean" data passed from the map
+  const [fullProperty, setFullProperty] = useState<any>(property);
+  const [loadingDetails, setLoadingDetails] = useState(false);
+
   const [currency, setCurrency] = useState<"GHS" | "USD">("GHS");
   const [isImageExpanded, setIsImageExpanded] = useState(false);
   const [photoIndex, setPhotoIndex] = useState(0);
-
-  // --- AUTH & GATEKEEPER STATE ---
   const [user, setUser] = useState<any>(null);
   const [showAuth, setShowAuth] = useState(false);
-  
-  // --- AGENTS & MODALS STATE ---
   const [showVerifyModal, setShowVerifyModal] = useState(false);
   const [showHypeMan, setShowHypeMan] = useState(false); 
   const [toastMessage, setToastMessage] = useState<string | null>(null);
-
-  // --- CONTACT FORM STATE ---
   const [isContactOpen, setContactOpen] = useState(false);
   const [inquirer, setInquirer] = useState({ name: "", phone: "", message: "" });
   
-  // LEAD ROUTER HOOK
   const { createLeadAndRedirect, loading: routingLead } = useLeadRouter();
 
-  const data = property;
+  // 🟢 2. HYDRATION EFFECT: Fetch heavy details on mount
+  useEffect(() => {
+    // Reset to prop when it changes (fast switch between pins)
+    setFullProperty(property); 
+    
+    async function fetchFullDetails() {
+      if (!property?.id) return;
+      setLoadingDetails(true);
+      
+      // Fetch heavy fields: description, all images, owner profile
+      const { data, error } = await supabase
+        .from('properties')
+        .select(`
+          *,
+          property_images(url),
+          profiles:owner_id(full_name, email, role, verification_tier, avatar_url)
+        `)
+        .eq('id', property.id)
+        .single();
+
+      if (!error && data) {
+        // Merge new data with existing light data
+        const merged = {
+          ...property, // Keep geospatial stuff passed from map
+          ...data,     // Overwrite with fresh text/details
+          // Normalize images: favor array column, fallback to relation
+          images: data.image_urls || (data.property_images ? data.property_images.map((img: any) => img.url) : []) || [],
+          owner: data.profiles // Attach owner profile to the 'owner' key
+        };
+        setFullProperty(merged);
+      }
+      setLoadingDetails(false);
+    }
+
+    fetchFullDetails();
+  }, [property.id]);
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
@@ -75,19 +129,17 @@ export default function PropertyInspector({
   }, []);
 
   const handleGatekeptAction = (action: () => void) => {
-    if (user) {
-      action();
-    } else {
-      setShowAuth(true);
-    }
+    if (user) { action(); } else { setShowAuth(true); }
   };
 
-  // Check if current user owns this asset
+  // 🟢 3. Use the hydrated data object
+  const data = fullProperty; 
+  
   const isOwner = user && data.owner_id === user.id;
+  const isLand = data.property_class?.toLowerCase() === 'land';
 
   if (!data) return null;
 
-  // --- IMAGE GALLERY LOGIC ---
   const galleryImages = useMemo(() => {
     const images: string[] = [];
     if (data.cover_image_url) images.push(data.cover_image_url);
@@ -101,7 +153,8 @@ export default function PropertyInspector({
     if (images.length === 0) {
       images.push("https://images.unsplash.com/photo-1570129477492-45c003edd2be?auto=format&fit=crop&w=1600&q=80");
     }
-    return images;
+    // Deduplicate
+    return Array.from(new Set(images));
   }, [data]);
 
   const nextPhoto = (e?: React.MouseEvent) => {
@@ -114,8 +167,6 @@ export default function PropertyInspector({
     setPhotoIndex((prev) => (prev - 1 + galleryImages.length) % galleryImages.length);
   };
 
-  // --- ACTIONS ---
-  
   const handleOpenContact = () => {
     setInquirer(prev => ({
       ...prev,
@@ -140,41 +191,18 @@ export default function PropertyInspector({
       if (!data.vibe_features) return [];
       if (Array.isArray(data.vibe_features)) return data.vibe_features;
       return JSON.parse(data.vibe_features) || [];
-    } catch (e) {
-      return [];
-    }
+    } catch (e) { return []; }
   };
 
   const exchangeRate = 15.5;
-  const displayPrice =
-    currency === "GHS"
-      ? `₵${data.price?.toLocaleString()}`
-      : `$${(data.price / exchangeRate).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
-      
+  const displayPrice = currency === "GHS" ? `₵${data.price?.toLocaleString()}` : `$${(data.price / exchangeRate).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
   const numericPrice = currency === "GHS" ? data.price : (data.price / exchangeRate);
-
   const widgetHoverEffect = "transition-transform duration-300 hover:scale-[1.02] hover:shadow-[0_4px_20px_rgba(0,0,0,0.5)]";
-
-  // MOBILE vs DESKTOP ANIMATION VARIANTS
   const inspectorVariants = {
-    hidden: { 
-      y: "100%", // Default hidden state for mobile (bottom sheet)
-      x: 0,
-      opacity: 0 
-    },
-    visible: { 
-      y: 0,
-      x: 0,
-      opacity: 1 
-    },
-    desktopHidden: {
-      x: "100%", // Hidden state for desktop (side drawer)
-      y: 0,
-      opacity: 0
-    }
+    hidden: { y: "100%", x: 0, opacity: 0 },
+    visible: { y: 0, x: 0, opacity: 1 },
+    desktopHidden: { x: "100%", y: 0, opacity: 0 }
   };
-
-  // Simple check for mobile viewport
   const isMobile = window.innerWidth < 768;
 
   return (
@@ -183,20 +211,8 @@ export default function PropertyInspector({
       <AnimatePresence>{toastMessage && <Toast message={toastMessage} onClose={() => setToastMessage(null)} type="success" />}</AnimatePresence>
       
       <AnimatePresence>
-        {showVerifyModal && (
-          <FieldReportModal 
-            propertyId={data.id} 
-            propertyName={data.title}
-            onClose={() => setShowVerifyModal(false)}
-            onSuccess={() => setToastMessage("Field Report Transmitted: Reputation Increased")}
-          />
-        )}
-        {showHypeMan && (
-          <HypeManModal 
-            property={data} 
-            onClose={() => setShowHypeMan(false)} 
-          />
-        )}
+        {showVerifyModal && (<FieldReportModal propertyId={data.id} propertyName={data.title} onClose={() => setShowVerifyModal(false)} onSuccess={() => setToastMessage("Field Report Transmitted")} />)}
+        {showHypeMan && (<HypeManModal property={data} onClose={() => setShowHypeMan(false)} />)}
       </AnimatePresence>
 
       <AnimatePresence>
@@ -231,7 +247,6 @@ export default function PropertyInspector({
         transition={{ type: "spring", damping: 25, stiffness: 200 }}
         className="fixed inset-0 top-[10vh] md:top-0 md:left-auto md:w-[450px] bg-[#0A0A0A] border-t md:border-t-0 md:border-l border-white/10 shadow-2xl z-[60] flex flex-col rounded-t-2xl md:rounded-none"
       >
-        {/* Mobile Drag Handle */}
         <div className="md:hidden w-full flex justify-center pt-3 pb-1 cursor-grab active:cursor-grabbing bg-[#0A0A0A]">
           <div className="w-12 h-1.5 bg-white/20 rounded-full" />
         </div>
@@ -241,31 +256,33 @@ export default function PropertyInspector({
           <div className="relative h-56 md:h-64 bg-gray-900 group cursor-zoom-in" onClick={() => { setPhotoIndex(0); setIsImageExpanded(true); }}>
             <img src={data.cover_image_url || galleryImages[0]} alt={data.title} className="w-full h-full object-cover opacity-90" />
             <div className="absolute inset-0 bg-gradient-to-t from-[#0A0A0A] via-transparent to-transparent" />
-            
             <div className="absolute top-0 left-0 w-full p-4 flex justify-between items-start z-10">
                <button onClick={(e) => { e.stopPropagation(); onClose(); }} className="bg-black/40 hover:bg-black/80 text-white p-2.5 rounded-full backdrop-blur-md border border-white/10">
-                 {/* Mobile gets ChevronDown, Desktop gets ArrowLeft */}
                  {isMobile ? <ChevronDown size={20} /> : <ArrowLeft size={20} />}
                </button>
                
                <div className="flex gap-2">
-                 {/* 🟢 GENTLE UPDATE: ONLY SHOW IF OWNER */}
+                 <button 
+                   onClick={(e) => {
+                     e.stopPropagation();
+                     window.open(`/listing/${data.id}`, '_blank');
+                   }}
+                   className="bg-black/40 hover:bg-emerald-500/20 text-white hover:text-emerald-400 p-2.5 rounded-full backdrop-blur-md border border-white/10 transition-colors"
+                   title="Open Full Details Page"
+                 >
+                   <ExternalLink size={18} />
+                 </button>
+
                  {isOwner && (
-                   <button 
-                     onClick={(e) => { e.stopPropagation(); setShowHypeMan(true); }}
-                     className="bg-black/40 hover:bg-purple-500/80 text-white p-2.5 rounded-full backdrop-blur-md border border-white/10 transition-colors"
-                     title="Generate Marketing"
-                   >
+                   <button onClick={(e) => { e.stopPropagation(); setShowHypeMan(true); }} className="bg-black/40 hover:bg-purple-500/80 text-white p-2.5 rounded-full backdrop-blur-md border border-white/10 transition-colors">
                      <Sparkles size={18} />
                    </button>
                  )}
-
                  <div className="bg-black/50 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/20 text-white text-[10px] font-bold uppercase tracking-wider flex items-center gap-2">
                    <Maximize2 size={12} /> {photoIndex + 1}/{galleryImages.length}
                  </div>
                </div>
             </div>
-
             <div className="absolute bottom-0 left-0 w-full p-6 pt-12 bg-gradient-to-t from-[#0A0A0A] to-transparent">
               <h2 className="text-2xl md:text-3xl font-bold text-white leading-tight mb-2 tracking-tight">{data.title}</h2>
               <div className="flex items-center text-gray-400 text-sm font-medium">
@@ -275,72 +292,115 @@ export default function PropertyInspector({
           </div>
 
           <div className="grid grid-cols-[1fr_auto_auto] gap-3 p-4 border-b border-white/10 bg-[#0A0A0A] sticky top-0 z-20 shadow-lg shadow-black/50">
-            <div 
-              className="flex flex-col justify-center cursor-pointer active:scale-95 transition-transform" 
-              onClick={() => setCurrency((c) => (c === "GHS" ? "USD" : "GHS"))}
-            >
-              <div className="flex items-center gap-1 text-[10px] text-gray-500 uppercase font-bold tracking-wider">
-                Asking Price <ChevronDown size={10} />
-              </div>
-              <div className="text-xl md:text-2xl font-mono text-emerald-400 font-bold leading-none mt-1">
-                {displayPrice}
-              </div>
+            <div className="flex flex-col justify-center cursor-pointer active:scale-95 transition-transform" onClick={() => setCurrency((c) => (c === "GHS" ? "USD" : "GHS"))}>
+              <div className="flex items-center gap-1 text-[10px] text-gray-500 uppercase font-bold tracking-wider">Asking Price <ChevronDown size={10} /></div>
+              <div className="text-xl md:text-2xl font-mono text-emerald-400 font-bold leading-none mt-1">{displayPrice}</div>
             </div>
-            
             <div className="flex items-center gap-2">
-               <div onClickCapture={(e) => !user && (e.stopPropagation(), setShowAuth(true))}>
-                 <SaveButton propertyId={data.id} className="h-10 w-10 md:w-auto md:px-4" />
-               </div>
-               
-               {onVerify && (
-                <button 
-                  onClick={() => handleGatekeptAction(() => setShowVerifyModal(true))} 
-                  className="w-10 h-10 flex items-center justify-center rounded-lg bg-emerald-900/20 hover:bg-emerald-900/40 border border-emerald-500/30 text-emerald-500 transition-colors"
-                >
-                  <ShieldCheck size={20} />
-                </button>
-               )}
+               <div onClickCapture={(e) => !user && (e.stopPropagation(), setShowAuth(true))}><SaveButton propertyId={data.id} className="h-10 w-10 md:w-auto md:px-4" /></div>
+               {onVerify && (<button onClick={() => handleGatekeptAction(() => setShowVerifyModal(true))} className="w-10 h-10 flex items-center justify-center rounded-lg bg-emerald-900/20 hover:bg-emerald-900/40 border border-emerald-500/30 text-emerald-500 transition-colors"><ShieldCheck size={20} /></button>)}
             </div>
           </div>
 
           <div className="p-4 md:p-6 space-y-6 md:space-y-8">
             <AnimatePresence>
               {isContactOpen && (
-                <motion.div
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: "auto" }}
-                  exit={{ opacity: 0, height: 0 }}
-                  className="overflow-hidden"
-                >
+                <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
                   <div className="bg-white/5 border border-emerald-500/30 rounded-xl p-4 md:p-5 space-y-4 relative">
                      <button type="button" onClick={() => setContactOpen(false)} className="absolute top-4 right-4 text-gray-500 hover:text-white bg-white/5 p-1 rounded-full"><X size={14} /></button>
-                     <div>
-                       <h4 className="text-emerald-400 text-xs font-bold uppercase tracking-wider mb-1">Secure Inquiry</h4>
-                       <p className="text-gray-500 text-[10px]">Direct encrypted link to agent.</p>
-                     </div>
+                     <div><h4 className="text-emerald-400 text-xs font-bold uppercase tracking-wider mb-1">Secure Inquiry</h4><p className="text-gray-500 text-[10px]">Direct encrypted link to agent.</p></div>
                      <form onSubmit={handleSendInquiry} className="space-y-3">
-                        <div className="relative group">
-                          <User size={14} className="absolute left-3 top-3 text-gray-500 group-focus-within:text-emerald-500" />
-                          <input type="text" required placeholder="Your Name" value={inquirer.name} onChange={(e) => setInquirer({...inquirer, name: e.target.value})} className="w-full bg-black/40 border border-white/10 rounded-lg py-2.5 pl-9 pr-3 text-sm text-white focus:border-emerald-500/50 focus:outline-none transition-colors" />
-                        </div>
-                        <div className="relative group">
-                          <Phone size={14} className="absolute left-3 top-3 text-gray-500 group-focus-within:text-emerald-500" />
-                          <input type="tel" required placeholder="Phone Number" value={inquirer.phone} onChange={(e) => setInquirer({...inquirer, phone: e.target.value})} className="w-full bg-black/40 border border-white/10 rounded-lg py-2.5 pl-9 pr-3 text-sm text-white focus:border-emerald-500/50 focus:outline-none transition-colors" />
-                        </div>
+                        <div className="relative group"><User size={14} className="absolute left-3 top-3 text-gray-500 group-focus-within:text-emerald-500" /><input type="text" required placeholder="Your Name" value={inquirer.name} onChange={(e) => setInquirer({...inquirer, name: e.target.value})} className="w-full bg-black/40 border border-white/10 rounded-lg py-2.5 pl-9 pr-3 text-sm text-white focus:border-emerald-500/50 focus:outline-none transition-colors" /></div>
+                        <div className="relative group"><Phone size={14} className="absolute left-3 top-3 text-gray-500 group-focus-within:text-emerald-500" /><input type="tel" required placeholder="Phone Number" value={inquirer.phone} onChange={(e) => setInquirer({...inquirer, phone: e.target.value})} className="w-full bg-black/40 border border-white/10 rounded-lg py-2.5 pl-9 pr-3 text-sm text-white focus:border-emerald-500/50 focus:outline-none transition-colors" /></div>
                         <textarea required rows={3} value={inquirer.message} onChange={(e) => setInquirer({...inquirer, message: e.target.value})} className="w-full bg-black/40 border border-white/10 rounded-lg p-3 text-sm text-white focus:border-emerald-500/50 focus:outline-none resize-none" />
-                        <button type="submit" disabled={routingLead} className="w-full bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold py-3 rounded-lg flex items-center justify-center gap-2 transition-colors uppercase tracking-widest text-xs">
-                           {routingLead ? <><Loader2 size={14} className="animate-spin" /> Securing Link...</> : <><Send size={14} /> Send Request</>}
-                        </button>
+                        <button type="submit" disabled={routingLead} className="w-full bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold py-3 rounded-lg flex items-center justify-center gap-2 transition-colors uppercase tracking-widest text-xs">{routingLead ? <><Loader2 size={14} className="animate-spin" /> Securing Link...</> : <><Send size={14} /> Send Request</>}</button>
                      </form>
                   </div>
                 </motion.div>
               )}
             </AnimatePresence>
 
+            {/* 🟢 LAND PROFILE */}
+            {isLand ? (
+              <>
+                <div className="bg-blue-900/10 border border-blue-500/20 p-4 rounded-xl space-y-3">
+                    <h3 className="text-[10px] font-bold text-blue-400 uppercase tracking-widest flex items-center gap-2">
+                        <MapIcon size={14} /> Land Profile
+                    </h3>
+                    <div className="grid grid-cols-2 gap-4">
+                        <div>
+                            <span className="text-[10px] text-gray-500 uppercase flex items-center mb-1">
+                              Plot Size <SimpleTooltip text="1 Acre = 4 standard plots (70x100ft) or approx 4046 sqm." />
+                            </span>
+                            <span className="text-white font-bold font-mono">
+                                {data.land_metadata?.acres?.toFixed(2) || data.land_metadata?.calculated_acres || 0} Acres
+                            </span>
+                        </div>
+                        <div>
+                            <span className="text-[10px] text-gray-500 uppercase flex items-center mb-1">
+                              Zoning <SimpleTooltip text="Determines if you can build residential, commercial, or industrial structures here." />
+                            </span>
+                            <span className="text-white font-bold capitalize">
+                                {data.land_metadata?.zoning || "Unzoned"}
+                            </span>
+                        </div>
+                        <div className="col-span-2 pt-2 border-t border-white/10 flex justify-between items-center">
+                            <div className="flex items-center gap-2">
+                                <FileCheck size={14} className="text-gray-500" />
+                                <span className="text-xs text-gray-400 flex items-center gap-1">
+                                  Title Status <SimpleTooltip text="Registered means it has a formal Land Title Certificate from the Lands Commission." />
+                                </span>
+                            </div>
+                            <span className={`text-xs font-bold px-2 py-1 rounded border ${
+                                data.land_metadata?.title_type === 'registered' 
+                                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' 
+                                : 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20'
+                            }`}>
+                                {(data.land_metadata?.title_type || "Indenture").replace('_', ' ')}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2">
+                   <DevelopmentCostCalculator 
+                      acres={data.land_metadata?.acres || data.land_metadata?.calculated_acres || 0.16} 
+                      topography={data.land_metadata?.topography || 'flat'} 
+                   />
+                   <GridConnectionCard locationName={data.location_name} />
+                </div>
+              </>
+            ) : (
+              // 🟢 STRUCTURE PROFILE (Houses/Apartments)
+              <div className="bg-white/5 border border-white/10 p-4 rounded-xl grid grid-cols-3 gap-4 text-center">
+                <div>
+                    <span className="text-[10px] text-gray-500 uppercase block mb-1 flex items-center justify-center gap-1"><Bed size={10} /> Beds</span>
+                    <span className="text-white font-bold text-lg">{data.details?.bedrooms || '-'}</span>
+                </div>
+                <div className="border-l border-white/10">
+                    <span className="text-[10px] text-gray-500 uppercase block mb-1 flex items-center justify-center gap-1"><Bath size={10} /> Baths</span>
+                    <span className="text-white font-bold text-lg">{data.details?.bathrooms || '-'}</span>
+                </div>
+                <div className="border-l border-white/10">
+                    <span className="text-[10px] text-gray-500 uppercase block mb-1 flex items-center justify-center gap-1"><Square size={10} /> Size</span>
+                    <span className="text-white font-bold text-lg">{data.details?.sqft ? `${data.details.sqft} sqft` : '-'}</span>
+                </div>
+              </div>
+            )}
+
             <div className="space-y-4">
                 <div>
                   <h3 className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2">The Brief</h3>
-                  <p className="text-gray-300 text-sm leading-relaxed">{data.description_enriched || data.description || "No description provided."}</p>
+                  {/* 🟢 DESCRIPTION SKELETON LOADER */}
+                  {loadingDetails && !data.description ? (
+                    <div className="space-y-2 animate-pulse">
+                      <div className="h-3 bg-white/10 rounded w-3/4"></div>
+                      <div className="h-3 bg-white/10 rounded w-full"></div>
+                      <div className="h-3 bg-white/10 rounded w-1/2"></div>
+                    </div>
+                  ) : (
+                    <p className="text-gray-300 text-sm leading-relaxed">{data.description_enriched || data.description || "No description provided."}</p>
+                  )}
                 </div>
                 {data.vibe_features && (
                   <div className="flex flex-wrap gap-2">
@@ -351,12 +411,15 @@ export default function PropertyInspector({
                 )}
             </div>
 
-            <div className="space-y-4 pt-4 border-t border-white/5">
-                <h3 className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest mb-2 flex items-center gap-2"><ShieldCheck size={14} /> Field Intelligence</h3>
-                <div className={widgetHoverEffect}><TrustScorecard property={data} owner={data.owner} /></div>
-                <div className={widgetHoverEffect}><MarketPulse property={data} /></div>
-                <div className={widgetHoverEffect}><TrueCostCalculator price={numericPrice} currency={currency} bedrooms={data.details?.bedrooms || 1} type={data.type} /></div>
-            </div>
+            {/* STRUCTURE SPECIFIC INTEL: Only show if NOT land */}
+            {!isLand && (
+              <div className="space-y-4 pt-4 border-t border-white/5">
+                  <h3 className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest mb-2 flex items-center gap-2"><ShieldCheck size={14} /> Field Intelligence</h3>
+                  <div className={widgetHoverEffect}><TrustScorecard property={data} owner={data.owner} /></div>
+                  <div className={widgetHoverEffect}><MarketPulse property={data} /></div>
+                  <div className={widgetHoverEffect}><TrueCostCalculator price={numericPrice} currency={currency} bedrooms={data.details?.bedrooms || 1} type={data.type} /></div>
+              </div>
+            )}
 
             <div className="space-y-4 pb-8">
                 <IntelligenceCard key={data.id} propertyId={data.id} locationName={data.location_name} />

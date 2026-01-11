@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
+from fastapi.middleware.cors import CORSMiddleware
 from api.routers import listings, whatsapp
 
 # --- API METADATA ORGANIZATION ---
@@ -27,6 +28,19 @@ app = FastAPI(
     version="4.2",
     description="The AI Backend for the Ghanaian Real Estate Market.",
     openapi_tags=tags_metadata
+)
+
+# --- 2. CORS MIDDLEWARE (The Fix) ---
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",      # Your Local Frontend
+        "http://127.0.0.1:5173",      # Alternative Localhost
+        "https://dev.asta.homes"      # Production Domain
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],              # Allow GET, POST, PUT, DELETE, etc.
+    allow_headers=["*"],              # Allow all headers (Auth, Content-Type)
 )
 
 # --- REGISTER ROUTERS ---
@@ -114,3 +128,20 @@ def list_google_models():
         return {"count": len(models), "models": models}
     except Exception as e:
         return {"error": str(e)}
+
+# --- 3. MISSING ENDPOINT (Fixes 404 Error) ---
+@app.get("/api/trends", tags=["Phase 2: Intelligence"])
+def get_market_trends():
+    """Returns trending search tags for the frontend search bar."""
+    return {
+        "trending_tags": [
+            "East Legon",
+            "Cantonments",
+            "Airport Residential",
+            "Osu",
+            "Labone",
+            "Spintex",
+            "Swimming Pool",
+            "Gated Community"
+        ]
+    }

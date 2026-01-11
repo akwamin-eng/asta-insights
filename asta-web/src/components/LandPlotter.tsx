@@ -1,61 +1,183 @@
-import React, { useState, useCallback, useMemo } from 'react';
-import { GoogleMap, useJsApiLoader, Polygon, Marker } from '@react-google-maps/api';
-import { Ruler, Trash2, Undo, Layers, CheckCircle2, X } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useRef } from "react";
+import { useControl, useMap } from "react-map-gl";
+import MapboxDraw from "@mapbox/mapbox-gl-draw";
+import "@mapbox/mapbox-gl-draw/dist/mapbox-gl-draw.css";
+import * as turf from "@turf/turf";
+import { CheckCircle2, X, Crosshair, Layers, Trash2 } from "lucide-react";
 
-const containerStyle = { width: '100%', height: '100%' };
-const defaultCenter = { lat: 5.6639, lng: -0.1665 }; 
-const libraries: ("geometry" | "drawing" | "places")[] = ["geometry"];
+const DrawControl = React.forwardRef((props: any, ref) => {
+  useControl(
+    () => new MapboxDraw(props),
+    ({ map }) => {
+      map.on("draw.create", props.onUpdate);
+      map.on("draw.update", props.onUpdate);
+      map.on("draw.delete", props.onDelete);
+    },
+    ({ map }) => {
+      map.off("draw.create", props.onUpdate);
+      map.off("draw.update", props.onUpdate);
+      map.off("draw.delete", props.onDelete);
+    },
+    { position: props.position }
+  );
+  return null;
+});
 
-export default function LandPlotter({ mode = 'standalone', initialLocation, initialZoom = 18, onComplete, onCancel }: any) {
-  const { isLoaded } = useJsApiLoader({
-    id: 'google-map-script',
-    googleMapsApiKey: import.meta.env.VITE_GOOGLE_API_KEY || "",
-    libraries: libraries
-  });
+interface LandPlotterProps {
+  onComplete: (data: any) => void;
+  onCancel: () => void;
+}
 
-  const [path, setPath] = useState<{ lat: number; lng: number }[]>([]);
-  const [mapTypeId, setMapTypeId] = useState<any>('hybrid');
+export default function LandPlotter({
+  onComplete,
+  onCancel,
+}: LandPlotterProps) {
+  const { current: map } = useMap();
+  const [polygon, setPolygon] = useState<any>(null);
+  const [stats, setStats] = useState({ acres: 0, plots: 0 });
+  const [cursorTooltip, setCursorTooltip] = useState<{
+    x: number;
+    y: number;
+    text: string;
+  } | null>(null);
+  const drawRef = useRef<MapboxDraw | null>(null);
 
-  const center = useMemo(() => {
-    if (initialLocation?.lat) return { lat: initialLocation.lat, lng: initialLocation.long };
-    return defaultCenter;
-  }, [initialLocation]);
-
-  const stats = useMemo(() => {
-    if (path.length < 3 || !window.google) return { acres: 0, plots: 0 };
-    const areaSqM = google.maps.geometry.spherical.computeArea(path);
+  const calculateStats = useCallback((feature: any) => {
+    if (!feature) {
+      setStats({ acres: 0, plots: 0 });
+      return;
+    }
+    const areaSqM = turf.area(feature);
     const areaSqFt = areaSqM * 10.7639;
-    return { acres: areaSqFt / 43560, plots: areaSqFt / 7000 };
-  }, [path]);
+    setStats({
+      acres: areaSqFt / 43560,
+      plots: areaSqFt / 4900, // Approx 70x70 plot
+    });
+  }, []);
 
-  if (!isLoaded) return <div className="h-full flex items-center justify-center bg-slate-900 text-white">Loading Map...</div>;
+  const onUpdate = useCallback(
+    (e: any) => {
+      const feature = e.features[0];
+      setPolygon(feature);
+      calculateStats(feature);
+      setCursorTooltip(null);
+    },
+    [calculateStats]
+  );
+
+  const onDelete = useCallback(() => {
+    setPolygon(null);
+    setStats({ acres: 0, plots: 0 });
+  }, []);
+
+  // 🟢 UX FIX: Force Cursor Change & Tooltip
+  useEffect(() => {
+    if (!map) return;
+
+    const canvas = map.getCanvas();
+    canvas.style.cursor = "crosshair"; // Force cursor immediately
+
+    const onMouseMove = (e: any) => {
+      if (polygon) {
+        canvas.style.cursor = "grab";
+        return;
+      }
+      canvas.style.cursor = "crosshair";
+      setCursorTooltip({
+        x: e.point.x,
+        y: e.point.y,
+        text: "Click map to set boundary corner.",
+      });
+    };
+
+    map.on("mousemove", onMouseMove);
+    return () => {
+      map.off("mousemove", onMouseMove);
+      if (map && map.getCanvas()) {
+        map.getCanvas().style.cursor = "";
+      }
+    };
+  }, [map, polygon]);
 
   return (
-    <div className="flex flex-col h-full bg-slate-900">
-      <div className="bg-slate-950 p-3 border-b border-white/10 flex justify-between items-center z-10">
-        <h2 className="text-white font-bold text-sm">Land Registry</h2>
-        <div className="flex gap-2">
-          <button onClick={() => setMapTypeId(mapTypeId === 'hybrid' ? 'roadmap' : 'hybrid')} className="p-2 bg-white/10 rounded"><Layers size={16} /></button>
-          <button onClick={() => setPath(p => p.slice(0, -1))} className="p-2 bg-white/10 rounded"><Undo size={16} /></button>
-          <button onClick={() => setPath([])} className="p-2 bg-red-500/20 text-red-400 rounded"><Trash2 size={16} /></button>
-          {onCancel && <button onClick={onCancel} className="p-2 bg-white/10 rounded"><X size={16} /></button>}
+    <>
+      <DrawControl
+        position="top-left"
+        displayControlsDefault={false}
+        controls={{ polygon: true, trash: true }}
+        defaultMode="draw_polygon"
+        onCreate={(draw: any) => {
+          drawRef.current = draw;
+        }}
+        onUpdate={onUpdate}
+        onDelete={onDelete}
+      />
+
+      {cursorTooltip && (
+        <div
+          className="fixed pointer-events-none z-[100] px-3 py-1.5 bg-emerald-600/90 text-white text-[10px] font-bold rounded-lg shadow-xl backdrop-blur-md border border-white/20 transform -translate-x-1/2 -translate-y-full mt-[-15px]"
+          style={{ left: cursorTooltip.x, top: cursorTooltip.y }}
+        >
+          <div className="flex items-center gap-1">
+            <Crosshair size={10} className="animate-spin-slow" />
+            {cursorTooltip.text}
+          </div>
+        </div>
+      )}
+
+      {/* 🟢 UX FIX: pointer-events-auto enables interaction with this panel */}
+      <div className="absolute top-20 left-4 z-50 flex flex-col gap-2 pointer-events-auto">
+        <div className="bg-black/90 text-white p-4 rounded-xl border border-white/20 shadow-2xl backdrop-blur-xl min-w-[200px]">
+          <div className="flex justify-between items-center mb-2 border-b border-white/10 pb-2">
+            <h3 className="font-bold text-sm text-emerald-400 flex items-center gap-2">
+              <Layers size={14} /> Land Registry
+            </h3>
+            <button
+              onClick={onCancel}
+              className="text-gray-400 hover:text-white transition-colors"
+            >
+              <X size={14} />
+            </button>
+          </div>
+
+          <div className="space-y-1">
+            <div className="text-2xl font-black">
+              {stats.plots.toFixed(2)}{" "}
+              <span className="text-xs font-normal text-gray-400">PLOTS</span>
+            </div>
+            <div className="text-xs text-gray-400 font-mono">
+              {stats.acres.toFixed(3)} ACRES
+            </div>
+          </div>
+
+          <div className="mt-4 flex gap-2">
+            {!polygon ? (
+              <div className="text-[10px] text-gray-400 italic flex items-center gap-2">
+                <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
+                Plotting Active...
+              </div>
+            ) : (
+              <>
+                <button
+                  onClick={() => onComplete({ polygon, stats })}
+                  className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white py-2 rounded-lg font-bold text-xs flex items-center justify-center gap-1 transition-colors"
+                >
+                  <CheckCircle2 size={12} /> SAVE
+                </button>
+                <button
+                  onClick={() => {
+                    if (drawRef.current) drawRef.current.deleteAll();
+                    onDelete();
+                  }}
+                  className="p-2 bg-white/10 hover:bg-white/20 rounded-lg text-white transition-colors"
+                >
+                  <Trash2 size={14} />
+                </button>
+              </>
+            )}
+          </div>
         </div>
       </div>
-      <div className="relative flex-1">
-        <GoogleMap mapContainerStyle={containerStyle} center={center} zoom={initialZoom} onClick={(e: any) => setPath([...path, { lat: e.latLng.lat(), lng: e.latLng.lng() }])} mapTypeId={mapTypeId} options={{ disableDefaultUI: true, zoomControl: true }}>
-          <Polygon paths={path} options={{ fillColor: "#10b981", fillOpacity: 0.3, strokeColor: "#34d399", strokeWeight: 2 }} />
-          {path.map((p, i) => <Marker key={i} position={p} label={{ text: (i + 1).toString(), color: "white" }} />)}
-        </GoogleMap>
-        <div className="absolute bottom-4 left-4 bg-black/80 p-3 rounded-lg border border-white/10">
-          <div className="text-xl font-bold text-white">{stats.plots.toFixed(2)} Plots</div>
-          <div className="text-xs text-gray-400">{stats.acres.toFixed(3)} Acres</div>
-        </div>
-        {path.length > 2 && onComplete && (
-          <button onClick={() => onComplete(path, stats)} className="absolute bottom-4 right-4 bg-emerald-600 p-3 rounded-lg text-white font-bold flex items-center gap-2">
-            <CheckCircle2 size={18} /> Confirm
-          </button>
-        )}
-      </div>
-    </div>
+    </>
   );
 }

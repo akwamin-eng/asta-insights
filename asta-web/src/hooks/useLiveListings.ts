@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
 
-// Define the shape of our Property object
 export interface Property {
   id: number;
   title: string;
@@ -12,13 +11,22 @@ export interface Property {
   location_name: string;
   location_accuracy: "high" | "low";
   vibe_features: string | string[];
-  description: string;
+  description?: string; 
   property_class?: string;
   type: "sale" | "rent";
+  status?: "active" | "pending_review" | "sold" | "archived";
   cover_image_url?: string;
   images?: string[];
+  owner_id?: string;
   owner?: any;
-  // Flexible details object to handle various schema versions
+  boundary_geom?: any; 
+  land_metadata?: {
+    acres?: number;
+    calculated_acres?: number;
+    zoning?: string;
+    title_type?: string;
+    [key: string]: any;
+  };
   details?: {
     bedrooms?: number;
     bathrooms?: number;
@@ -32,18 +40,14 @@ export function useLiveListings() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // 1. Initial Fetch
     fetchListings();
 
-    // 2. Realtime Subscription (The "Snappy" Part)
     const channel = supabase
       .channel("public:properties")
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "properties" },
         (payload) => {
-          console.log("⚡ Realtime Update detected:", payload);
-          // When DB changes, immediately re-fetch to keep map in sync
           fetchListings();
         }
       )
@@ -56,7 +60,6 @@ export function useLiveListings() {
 
   async function fetchListings() {
     try {
-      // 1. Fetch data including the new 'image_urls' column
       const { data, error } = await supabase
         .from("properties")
         .select(
@@ -67,44 +70,40 @@ export function useLiveListings() {
           currency,
           lat,
           long,
+          status,
           location_name,
           location_accuracy,
           vibe_features,
-          description,
-          description_enriched,
           property_class, 
           type,
           cover_image_url,
-          image_urls, 
-          property_images(url),
           details,
           owner_id,
           source,
-          features
+          features,
+          boundary_geom,
+          land_metadata
         `
         )
-        .eq("status", "active"); // Only active pins
+        .neq("status", "archived"); 
 
       if (error) throw error;
 
-      // 2. Data Normalization & Fallbacks
       const normalized = (data || []).map((p: any) => {
-        // Handle images: prioritize the array column (manual entry), fallback to relation
-        let finalImages = p.image_urls || [];
-        if (finalImages.length === 0 && p.property_images) {
-          finalImages = p.property_images.map((i: any) => i.url);
-        }
+        // 🟢 OPTIMIZATION: Reduce Coordinate Precision to 6 decimals (~11cm)
+        // This saves memory in the GeoJSON object
+        const lat = p.lat ? Number(p.lat.toFixed(6)) : 0;
+        const long = p.long ? Number(p.long.toFixed(6)) : 0;
 
         return {
           ...p,
-          // Fallback: If DB missing class, assume 'House' so it shows on map
+          lat,
+          long,
           property_class: p.property_class || "House",
-
-          // Ensure arrays are actually arrays
           vibe_features: Array.isArray(p.features) ? p.features : [],
-
-          images: finalImages,
-
+          images: p.cover_image_url ? [p.cover_image_url] : [],
+          boundary_geom: p.boundary_geom,
+          land_metadata: p.land_metadata,
           details: p.details || { bedrooms: 1, bathrooms: 1 },
         };
       });
@@ -117,6 +116,5 @@ export function useLiveListings() {
     }
   }
 
-  // Return refresh so we can manually trigger it if needed
   return { listings, loading, refresh: fetchListings };
 }
